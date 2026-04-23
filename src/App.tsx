@@ -40,76 +40,35 @@ const QUAD = [
   { id:"intellectual", label:"Intellectual", icon:"🧠",  color:"#6BCB77", pos:"bottom-right" },
 ];
 
+const EMPTY_MEMBER_TASKS = () => ({
+  learn: [], exercise: [], contribute: [], goals: []
+});
 const INIT_TASKS = {
-  bazel: {
-    learn:      [{ id:1, label:"Complete math worksheet", done:false },{ id:2, label:"Read 30 minutes", done:false },{ id:3, label:"Writing journal entry", done:false }],
-    exercise:   [{ id:4, label:"20 min morning run", done:false },{ id:5, label:"Stretching routine", done:false }],
-    contribute: [{ id:6, label:"Clean bedroom", done:false },{ id:7, label:"Wash dishes after dinner", done:false }],
-    goals:      [{ id:8, label:"Practice coding 20 min", done:false },{ id:9, label:"Read a Bible verse", done:false }],
-  },
-  okrie: {
-    learn:      [{ id:1, label:"Spelling words practice", done:false },{ id:2, label:"Read with Mom", done:false },{ id:3, label:"Science experiment", done:false }],
-    exercise:   [{ id:4, label:"Morning stretches", done:false },{ id:5, label:"Dance for 15 min", done:false }],
-    contribute: [{ id:6, label:"Set the table", done:false },{ id:7, label:"Tidy bedroom", done:false }],
-    goals:      [{ id:8, label:"Work on art portfolio", done:false },{ id:9, label:"Memorize Bible verse", done:false }],
-  },
-  saya: {
-    learn:      [{ id:1, label:"Phonics lesson", done:false },{ id:2, label:"Number practice 1–20", done:false },{ id:3, label:"Story time with Mom", done:false }],
-    exercise:   [{ id:4, label:"Jump rope for 10 min", done:false },{ id:5, label:"Morning stretches", done:false }],
-    contribute: [{ id:6, label:"Feed the pet", done:false },{ id:7, label:"Pick up toys", done:false }],
-    goals:      [{ id:8, label:"Draw a picture today", done:false },{ id:9, label:"Practice saying a prayer", done:false }],
-  },
-  dad: {
-    learn:      [{ id:1, label:"Read 20 min (non-fiction)", done:false },{ id:2, label:"Review family curriculum", done:false }],
-    exercise:   [{ id:3, label:"Morning workout", done:false }],
-    contribute: [{ id:4, label:"Lead family devotional", done:false },{ id:5, label:"Check in with each kid", done:false }],
-    goals:      [{ id:6, label:"Work on Family OS build", done:false },{ id:7, label:"Evening family prayer", done:false }],
-  },
-  mom: {
-    learn:      [{ id:1, label:"Prepare tomorrow's lessons", done:false },{ id:2, label:"Read 20 min", done:false }],
-    exercise:   [{ id:3, label:"Morning walk", done:false }],
-    contribute: [{ id:4, label:"Prepare reading materials", done:false },{ id:5, label:"Plan weekly rhythm", done:false }],
-    goals:      [{ id:6, label:"Culture board update", done:false },{ id:7, label:"Weekly grocery plan", done:false }],
-  },
+  dad:   EMPTY_MEMBER_TASKS(),
+  mom:   EMPTY_MEMBER_TASKS(),
+  bazel: EMPTY_MEMBER_TASKS(),
+  okrie: EMPTY_MEMBER_TASKS(),
+  saya:  EMPTY_MEMBER_TASKS(),
 };
 
 const INIT_GOALS = {
-  bazel: {
-    spiritual:    ["Memorize 5 Bible verses","Daily prayer streak"],
-    social:       ["Write a letter to grandma","Serve someone daily"],
-    physical:     ["Run a mile without stopping","Morning stretches streak"],
-    intellectual: ["Read 10 books this month","Learn basic coding"],
-  },
-  okrie: {
-    spiritual:    ["10 Bible verses memorized","Serve without being asked"],
-    social:       ["Write a short story","Be kind to sisters daily"],
-    physical:     ["Dance routine learned","Daily stretch habit"],
-    intellectual: ["Complete art portfolio","Science fair project"],
-  },
-  saya: {
-    spiritual:    ["Learn the Lord's Prayer","Daily bedtime prayer"],
-    social:       ["Share toys with sisters","Make someone smile daily"],
-    physical:     ["Jump rope 10 min daily","Morning stretches habit"],
-    intellectual: ["Read 50 sight words","Count to 100 by myself"],
-  },
-  dad: {
-    spiritual:    ["Daily devotional streak","Sunday family devotional"],
-    social:       ["Weekly date night","One-on-one time each kid"],
-    physical:     ["Morning workout streak","Family hike monthly"],
-    intellectual: ["Build family OS","Read leadership book"],
-  },
-  mom: {
-    spiritual:    ["Daily Scripture study","Gratitude journal"],
-    social:       ["Weekly culture night","Connect w/ each kid daily"],
-    physical:     ["Daily morning walk","Healthy meal planning"],
-    intellectual: ["Finish curriculum plan","Read design book"],
-  },
+  dad:   { spiritual:[], social:[], physical:[], intellectual:[] },
+  mom:   { spiritual:[], social:[], physical:[], intellectual:[] },
+  bazel: { spiritual:[], social:[], physical:[], intellectual:[] },
+  okrie: { spiritual:[], social:[], physical:[], intellectual:[] },
+  saya:  { spiritual:[], social:[], physical:[], intellectual:[] },
 };
 
-const INIT_STREAKS  = { dad:5, mom:7, bazel:4, okrie:6, saya:2 };
-const INIT_WEEK_PTS = { dad:0, mom:0, bazel:14, okrie:18, saya:8 };
+const INIT_STREAKS  = { dad:0, mom:0, bazel:0, okrie:0, saya:0 };
+const INIT_WEEK_PTS = { dad:0, mom:0, bazel:0, okrie:0, saya:0 };
 
-const TODAY_DATE = new Date(2025, 3, 15);
+// Use real current date in Mountain Time
+function getMountainToday() {
+  const now = new Date();
+  const mt = new Date(now.toLocaleString('en-US', { timeZone: 'America/Denver' }));
+  return new Date(mt.getFullYear(), mt.getMonth(), mt.getDate());
+}
+const TODAY_DATE = getMountainToday();
 const DAYS_SHORT  = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const MONTHS      = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
@@ -190,23 +149,7 @@ function BottomNav({ page, onPage }) {
 const CAL_HOURS = Array.from({ length:15 }, (_, i) => i + 6);
 const CELL_H = 52;
 
-const INIT_CAL_EVENTS = [
-  { id:1,  title:"Devotional",   memberIds:["dad","mom","bazel","okrie","saya"], startH:7,   dur:0.5, dow:1 },
-  { id:2,  title:"Math Block",   memberIds:["bazel","okrie","saya"],             startH:8,   dur:1.5, dow:1 },
-  { id:3,  title:"Reading",      memberIds:["bazel"],                            startH:9.5, dur:1,   dow:1 },
-  { id:4,  title:"Art",          memberIds:["okrie"],                            startH:10,  dur:1,   dow:1 },
-  { id:5,  title:"Phonics",      memberIds:["saya"],                             startH:9,   dur:1,   dow:1 },
-  { id:6,  title:"Work Block",   memberIds:["dad"],                              startH:9,   dur:3,   dow:1 },
-  { id:7,  title:"Lesson Prep",  memberIds:["mom"],                              startH:8,   dur:1,   dow:1 },
-  { id:8,  title:"Family Lunch", memberIds:["dad","mom","bazel","okrie","saya"], startH:12,  dur:1,   dow:1 },
-  { id:9,  title:"Math Block",   memberIds:["bazel","okrie","saya"],             startH:8,   dur:1.5, dow:2 },
-  { id:10, title:"Science",      memberIds:["okrie","bazel"],                    startH:10,  dur:1.5, dow:2 },
-  { id:11, title:"Movement",     memberIds:["saya","okrie","bazel"],             startH:11,  dur:1,   dow:3 },
-  { id:12, title:"Writing",      memberIds:["bazel","okrie"],                    startH:9.5, dur:1,   dow:3 },
-  { id:13, title:"Work Block",   memberIds:["dad"],                              startH:8,   dur:4,   dow:3 },
-  { id:14, title:"Family Hike",  memberIds:["dad","mom","bazel","okrie","saya"], startH:9,   dur:3,   dow:6 },
-  { id:15, title:"Co-op",        memberIds:["bazel","okrie","saya"],             startH:9,   dur:3,   dow:5 },
-];
+const INIT_CAL_EVENTS = [];
 
 function CalendarPage({ family, events }) {
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
@@ -221,12 +164,7 @@ function CalendarPage({ family, events }) {
       <div style={{ background:T.white, borderBottom:`2px solid ${T.border}`, padding:"12px 16px 0", flexShrink:0, width:"100%" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
           <h1 style={{ fontSize:24, fontWeight:700, color:T.text, margin:0 }}>{MONTHS[weekDates[0].getMonth()]} {weekDates[0].getFullYear()}</h1>
-          <div style={{ display:"flex", gap:8 }}>
-            {["‹","›"].map((ch,i) => (
-              <button key={i} onClick={() => { const d=new Date(weekAnchor); d.setDate(d.getDate()+(i===0?-7:7)); setWeekAnchor(d); }}
-                style={{ width:36,height:36,borderRadius:99,border:`2px solid ${T.border}`,background:T.white,cursor:"pointer",fontSize:18,fontWeight:700 }}>{ch}</button>
-            ))}
-          </div>
+          <div />
         </div>
         <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:10 }}>
           {family.map(m => {
@@ -241,6 +179,25 @@ function CalendarPage({ family, events }) {
           })}
         </div>
       </div>
+      {/* Left/Right week nav arrows */}
+      <button onClick={() => { const d=new Date(weekAnchor); d.setDate(d.getDate()-7); setWeekAnchor(d); }} style={{
+        position:"fixed", left:0, top:"50%", transform:"translateY(-50%)",
+        zIndex:50, width:44, height:80, background:T.white,
+        border:`2px solid ${T.border}`, borderLeft:"none",
+        borderRadius:"0 16px 16px 0",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        cursor:"pointer", boxShadow:"2px 0 12px rgba(0,0,0,0.08)",
+        fontSize:22, color:T.sub, fontWeight:700,
+      }}>‹</button>
+      <button onClick={() => { const d=new Date(weekAnchor); d.setDate(d.getDate()+7); setWeekAnchor(d); }} style={{
+        position:"fixed", right:0, top:"50%", transform:"translateY(-50%)",
+        zIndex:50, width:44, height:80, background:T.white,
+        border:`2px solid ${T.border}`, borderRight:"none",
+        borderRadius:"16px 0 0 16px",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        cursor:"pointer", boxShadow:"-2px 0 12px rgba(0,0,0,0.08)",
+        fontSize:22, color:T.sub, fontWeight:700,
+      }}>›</button>
       <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
         <div style={{ width:46, flexShrink:0, borderRight:`1px solid ${T.border}`, overflowY:"hidden" }}>
           <div style={{ height:44, borderBottom:`1px solid ${T.border}`, background:T.bg }} />
@@ -359,6 +316,15 @@ function TodayPage({ family }) {
   const [visible, setVisible] = useState(defaultVisible);
   const [taskState, setTaskState] = useState(() => JSON.parse(JSON.stringify(INIT_TASKS)));
   const [pts, setPts] = useState(Object.fromEntries(family.map(m => [m.id, 0])));
+  const [viewDate, setViewDate] = useState(getMountainToday());
+
+  function prevDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()-1); return n; }); }
+  function nextDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()+1); return n; }); }
+  const isToday = viewDate.toDateString() === getMountainToday().toDateString();
+  const [viewDate, setViewDate] = useState(new Date(TODAY_DATE));
+  function prevDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()-1); return n; }); }
+  function nextDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()+1); return n; }); }
+  const isToday = viewDate.toDateString() === TODAY_DATE.toDateString();
 
   function toggleTask(memberId, secId, taskId) {
     setTaskState(prev => {
@@ -378,7 +344,7 @@ function TodayPage({ family }) {
       <div style={{ borderBottom:`2px solid ${T.border}`, padding:"10px 14px", flexShrink:0, background: allKidsRainbow?"none":T.white, backgroundImage: allKidsRainbow?RAINBOW_GRAD:"none", transition:"all 0.8s ease" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
           <div>
-            <div style={{ fontSize:11, fontWeight:600, color: allKidsRainbow?"rgba(255,255,255,0.75)":T.muted, letterSpacing:0.5 }}>{TODAY_DATE.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
+            <div style={{ fontSize:11, fontWeight:600, color: allKidsRainbow?"rgba(255,255,255,0.75)":T.muted, letterSpacing:0.5 }}>{viewDate.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
             <div style={{ fontSize:22, fontWeight:700, color: allKidsRainbow?T.white:T.text, marginTop:1 }}>{allKidsRainbow?"🌈 Everyone earned a Rainbow Day!":"Today's Tasks"}</div>
           </div>
         </div>
@@ -397,6 +363,25 @@ function TodayPage({ family }) {
           })}
         </div>
       </div>
+      {/* Left/Right day nav arrows */}
+      <button onClick={prevDay} style={{
+        position:"fixed", left:0, top:"50%", transform:"translateY(-50%)",
+        zIndex:50, width:44, height:80, background:T.white,
+        border:`2px solid ${T.border}`, borderLeft:"none",
+        borderRadius:"0 16px 16px 0",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        cursor:"pointer", boxShadow:"2px 0 12px rgba(0,0,0,0.08)",
+        fontSize:22, color:T.sub, fontWeight:700,
+      }}>‹</button>
+      <button onClick={nextDay} style={{
+        position:"fixed", right:0, top:"50%", transform:"translateY(-50%)",
+        zIndex:50, width:44, height:80, background:T.white,
+        border:`2px solid ${T.border}`, borderRight:"none",
+        borderRadius:"16px 0 0 16px",
+        display:"flex", alignItems:"center", justifyContent:"center",
+        cursor:"pointer", boxShadow:"-2px 0 12px rgba(0,0,0,0.08)",
+        fontSize:22, color:T.sub, fontWeight:700,
+      }}>›</button>
       {activeMembers.length === 0 ? (
         <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:T.muted, fontSize:16, fontFamily:"'Fredoka',sans-serif" }}>Tap a name above to see their tasks 👆</div>
       ) : (
