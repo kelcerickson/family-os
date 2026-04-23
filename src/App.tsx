@@ -526,8 +526,13 @@ function PersonColumn({ member, tasks, onToggle, points, completions }) {
       <div className="scroll-col" style={{ flex:1, overflowY:"auto", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
         {SECTIONS.map(sec => {
           const secTasks = tasks[sec.id] || [];
-          const done = sectionDone(tasks, sec.id);
-          const doneCnt = secTasks.filter(t => t.done).length;
+          // Merge completion state from Supabase into each task
+          const secTasksWithDone = secTasks.map(t => ({
+            ...t,
+            done: !!(completions && completions[t.label + "|" + member.id])
+          }));
+          const doneCnt = secTasksWithDone.filter(t => t.done).length;
+          const done = secTasksWithDone.length > 0 && secTasksWithDone.every(t => t.done);
           return (
             <div key={sec.id} style={{ marginBottom:10 }}>
               <div style={{ borderRadius:"12px 12px 0 0", padding:"8px 10px 6px", background: done?sec.grad:T.white, border:`2px solid ${done?"transparent":T.border}`, borderBottom:"none", display:"flex", alignItems:"center", gap:7 }}>
