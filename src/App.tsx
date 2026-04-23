@@ -1,4 +1,100 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+
+// ── Supabase Client ───────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://mitzwognijayzgqvexcl.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pdHp3b2duaWpheXpncXZleGNsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5NzczNTAsImV4cCI6MjA5MjU1MzM1MH0.ueMDxAzg8kyEK1f67d02I55OPSpL66zmOEGxwxrlZJc";
+
+async function sb(table, method="GET", body=null, query="") {
+  const url = `${SUPABASE_URL}/rest/v1/${table}${query}`;
+  const headers = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": `Bearer ${SUPABASE_KEY}`,
+    "Content-Type": "application/json",
+    "Prefer": method === "POST" ? "return=representation" : "return=representation",
+  };
+  if (method === "PATCH" || method === "DELETE") headers["Prefer"] = "return=representation";
+  const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : null });
+  if (!res.ok) { console.error("Supabase error:", await res.text()); return null; }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+// Supabase helpers
+const SB = {
+  // Events
+  getEvents:   () => sb("cal_events", "GET", null, "?order=created_at"),
+  addEvent:    (ev) => sb("cal_events", "POST", {
+    title: ev.title, member_ids: ev.memberIds, start_h: ev.startH, dur: ev.dur,
+    recurrence: ev.recurrence || "weekly", dows: ev.dows || [ev.dow||1],
+    specific_date: ev.specificDate || null,
+  }),
+  deleteEvent: (id) => sb(`cal_events?id=eq.${id}`, "DELETE"),
+
+  // Chore assignments
+  getChores:   () => sb("chore_assignments", "GET", null, "?order=chore_label"),
+  upsertChore: (label, memberIds) => sb("chore_assignments", "POST",
+    { chore_label: label, member_ids: memberIds },
+    "?on_conflict=chore_label"
+  ),
+
+  // Tasks (template tasks per member/section)
+  getTasks:    () => sb("tasks", "GET", null, "?order=sort_order"),
+  addTask:     (memberId, section, label) => sb("tasks", "POST", { member_id: memberId, section, label }),
+  deleteTask:  (id) => sb(`tasks?id=eq.${id}`, "DELETE"),
+
+  // Task completions
+  getCompletions: (date) => sb("task_completions", "GET", null, `?completed_date=eq.${date}`),
+  addCompletion:  (label, memberId, date) => sb("task_completions", "POST",
+    { task_label: label, member_id: memberId, completed_date: date },
+    "?on_conflict=task_label,member_id,completed_date"
+  ),
+  deleteCompletion: (label, memberId, date) => sb(
+    `task_completions?task_label=eq.${encodeURIComponent(label)}&member_id=eq.${memberId}&completed_date=eq.${date}`,
+    "DELETE"
+  ),
+
+  // Goals
+  getGoals:    () => sb("goals", "GET", null, "?order=sort_order"),
+  addGoal:     (memberId, quadrant, label) => sb("goals", "POST", { member_id: memberId, quadrant, label }),
+  deleteGoal:  (id) => sb(`goals?id=eq.${id}`, "DELETE"),
+
+  // Streaks
+  getStreaks:  () => sb("streaks", "GET"),
+  upsertStreak: (memberId, current, longest, lastDate) => sb("streaks", "POST",
+    { member_id: memberId, current_streak: current, longest_streak: longest, last_rainbow_date: lastDate },
+    "?on_conflict=member_id"
+  ),
+};
+
+// Convert DB rows to app format
+function dbEventsToApp(rows) {
+  return (rows||[]).map(r => ({
+    id: r.id, title: r.title, memberIds: r.member_ids,
+    startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
+    dows: r.dows, specificDate: r.specific_date, dow: (r.dows||[1])[0],
+  }));
+}
+function dbTasksToApp(rows) {
+  const result = {};
+  (rows||[]).forEach(r => {
+    if (!result[r.member_id]) result[r.member_id] = { learn:[], exercise:[], contribute:[], goals:[] };
+    if (result[r.member_id][r.section]) result[r.member_id][r.section].push({ id: r.id, label: r.label, done: false });
+  });
+  return result;
+}
+function dbGoalsToApp(rows) {
+  const result = {};
+  (rows||[]).forEach(r => {
+    if (!result[r.member_id]) result[r.member_id] = { spiritual:[], social:[], physical:[], intellectual:[] };
+    if (result[r.member_id][r.quadrant]) result[r.member_id][r.quadrant].push(r.label);
+  });
+  return result;
+}
+function dbChoresToApp(rows) {
+  const result = {};
+  (rows||[]).forEach(r => { result[r.chore_label] = r.member_ids; });
+  return result;
+}
 
 const FONT_URL =
   "https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap";
@@ -378,10 +474,14 @@ function CalendarPage({ family, events }) {
 // ════════════════════════════════════════════════════════════════════════════
 // PAGE 2 — TODAY
 // ════════════════════════════════════════════════════════════════════════════
-function PersonColumn({ member, tasks, onToggle, points }) {
-  const isRainbow = allSectionsDone(tasks);
-  const totalItems = Object.values(tasks).flat().length;
-  const doneItems = Object.values(tasks).flat().filter(t => t.done).length;
+function PersonColumn({ member, tasks, onToggle, points, completions }) {
+  const isRainbow = SECTIONS.every(sec => {
+    const items = tasks[sec.id] || [];
+    return items.length === 0 || items.every(t => !!(completions && completions[t.label + "|" + member.id]));
+  });
+  const allTaskItems = Object.values(tasks).flat();
+  const totalItems = allTaskItems.length;
+  const doneItems = allTaskItems.filter(t => !!(completions && completions[t.label + "|" + member.id])).length;
 
   return (
     <div style={{ minWidth:0, flex:"1 1 0%", display:"flex", flexDirection:"column", borderRight:`2px solid ${T.border}`, background: isRainbow ? RAINBOW_SOFT : T.bg, transition:"background 0.8s ease" }}>
@@ -425,8 +525,8 @@ function PersonColumn({ member, tasks, onToggle, points }) {
                 }
               </div>
               <div style={{ background: done?`${sec.color}15`:T.white, border:`2px solid ${done?sec.color+"55":T.border}`, borderTop:"none", borderRadius:"0 0 12px 12px", padding:"6px 8px 8px" }}>
-                {secTasks.map(task => (
-                  <div key={task.id} onClick={() => onToggle(member.id, sec.id, task.id)}
+                {secTasksWithDone.map(task => (
+                  <div key={task.id} onClick={() => onToggle(member.id, sec.id, task.label, task.done)}
                     style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 8px", borderRadius:10, marginTop:4, cursor:"pointer", transition:"all 0.15s", background: task.done?`${sec.color}20`:"transparent" }}>
                     <div style={{ width:22, height:22, borderRadius:"50%", flexShrink:0, border:`2.5px solid ${task.done?sec.color:T.border}`, background: task.done?sec.color:"transparent", display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s" }}>
                       {task.done && <span style={{ color:"#fff", fontSize:11 }}>✓</span>}
@@ -447,7 +547,35 @@ function PersonColumn({ member, tasks, onToggle, points }) {
 function TodayPage({ family, choreAssignments }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
-  const [taskState, setTaskState] = useState(() => JSON.parse(JSON.stringify(INIT_TASKS)));
+  // Task completions loaded from Supabase per day
+  const [taskState, setTaskStateRaw] = useState({});
+  const [completions, setCompletions] = useState({}); // { "label|memberId": true }
+
+  useEffect(() => {
+    const dateStr = viewDate.toISOString().slice(0,10);
+    SB.getCompletions(dateStr).then(rows => {
+      const map = {};
+      (rows||[]).forEach(r => { map[r.task_label + "|" + r.member_id] = true; });
+      setCompletions(map);
+    });
+  }, [viewDate]);
+
+  function setTaskState(next) {
+    const resolved = typeof next === "function" ? next(taskState) : next;
+    setTaskStateRaw(resolved);
+  }
+
+  async function toggleCompletion(label, memberId, currentlyDone) {
+    const dateStr = viewDate.toISOString().slice(0,10);
+    const key = label + "|" + memberId;
+    if (currentlyDone) {
+      await SB.deleteCompletion(label, memberId, dateStr);
+      setCompletions(prev => { const n={...prev}; delete n[key]; return n; });
+    } else {
+      await SB.addCompletion(label, memberId, dateStr);
+      setCompletions(prev => ({ ...prev, [key]: true }));
+    }
+  }
   const [pts, setPts] = useState(Object.fromEntries(family.map(m => [m.id, 0])));
   const [viewDate, setViewDate] = useState(getMountainToday());
 
@@ -455,14 +583,8 @@ function TodayPage({ family, choreAssignments }) {
   function nextDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()+1); return n; }); }
   const isToday = viewDate.toDateString() === getMountainToday().toDateString();
 
-  function toggleTask(memberId, secId, taskId) {
-    setTaskState(prev => {
-      const next = { ...prev, [memberId]: { ...prev[memberId], [secId]: prev[memberId][secId].map(t => t.id===taskId?{...t,done:!t.done}:t) } };
-      const newPts = { ...pts };
-      family.forEach(m => { newPts[m.id] = SECTIONS.filter(s => sectionDone(next[m.id]||{}, s.id)).length; });
-      setPts(newPts);
-      return next;
-    });
+  async function toggleTask(memberId, secId, taskLabel, currentlyDone) {
+    await toggleCompletion(taskLabel, memberId, currentlyDone);
   }
 
   const activeMembers = family.filter(m => visible[m.id]);
@@ -524,7 +646,7 @@ function TodayPage({ family, choreAssignments }) {
               ...storedTasks,
               contribute: choreTasks.length > 0 ? choreTasks : (storedTasks.contribute || []),
             };
-            return <PersonColumn key={m.id} member={m} tasks={mergedTasks} onToggle={toggleTask} points={pts[m.id]||0} />;
+            return <PersonColumn key={m.id} member={m} tasks={mergedTasks} onToggle={toggleTask} points={pts[m.id]||0} completions={completions} />;
           })}
         </div>
       )}
@@ -818,7 +940,7 @@ function ProgressPage({ family, goals, streaks, weekPts }) {
 // ════════════════════════════════════════════════════════════════════════════
 // ADMIN PAGE
 // ════════════════════════════════════════════════════════════════════════════
-function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments }) {
+function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, dbTaskRows, dbGoalRows, onReload }) {
   const [tab, setTab] = useState("calendar");
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
 
@@ -827,12 +949,26 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
       <div style={{ background:T.text, padding:"20px 24px 0", borderBottom:`2px solid #333` }}>
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
           <span style={{ fontSize:28 }}>⚙️</span>
-          <div>
+          <div style={{ flex:1 }}>
             <h1 style={{ fontSize:26, fontWeight:700, color:T.white, margin:0 }}>Admin Setup</h1>
             <div style={{ fontSize:13, color:"rgba(255,255,255,0.5)", marginTop:2 }}>
               Family OS · <a href="#" onClick={e=>{e.preventDefault();window.location.hash="";}} style={{color:"#FFD93D",textDecoration:"none"}}>← Back to Kiosk</a>
+              <span style={{ marginLeft:12, color:"#6BCB77" }}>✅ Auto-saving to this device</span>
             </div>
           </div>
+          <button onClick={() => {
+            const data = {};
+            ["events","choreAssignments","tasks","goals","streaks","weekPts"].forEach(k => {
+              try { data[k] = JSON.parse(localStorage.getItem("familyos_"+k)||"null"); } catch {}
+            });
+            const blob = new Blob([JSON.stringify(data, null, 2)], {type:"application/json"});
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "familyos-backup-" + new Date().toISOString().slice(0,10) + ".json";
+            a.click();
+          }} style={{ padding:"8px 14px", borderRadius:10, background:"#2D7A56", color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, cursor:"pointer", flexShrink:0 }}>
+            ⬇️ Backup Data
+          </button>
         </div>
         <div style={{ display:"flex", gap:2 }}>
           {[{id:"calendar",label:"📅 Calendar"},{id:"chores",label:"🧹 Chores"},{id:"tasks",label:"⚡ Tasks"},{id:"goals",label:"🎯 Goals"}].map(t => (
@@ -858,11 +994,12 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   const [showOAuthGuide, setShowOAuthGuide] = useState(null);
   const DOW_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
-  function addEvent() {
+  async function addEvent() {
     if (!form.title || form.memberIds.length===0) return;
     if (form.recurrence === "once" && !form.specificDate) return;
     if ((form.recurrence === "weekly" || form.recurrence === "monthly") && (!form.dows || form.dows.length === 0)) return;
-    setEvents(prev => [...prev, { ...form, id:Date.now() }]);
+    const rows = await SB.addEvent(form);
+    if (rows) setEvents(prev => [...prev, ...dbEventsToApp(rows)]);
     setForm(EMPTY_FORM);
     setShowForm(false);
   }
@@ -1089,7 +1226,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
               <div style={{ background: recTag==="One-time"?"#F3E5FF":recTag==="Daily"?"#D5EEE2":recTag==="Monthly"?"#FDEEDE":"#D6E8F7", color: recTag==="One-time"?"#7C5C9E":recTag==="Daily"?"#2D7A56":recTag==="Monthly"?"#D4732A":"#3B6FA0", borderRadius:99, padding:"3px 9px", fontSize:11, fontWeight:700, fontFamily:"'Fredoka',sans-serif", flexShrink:0 }}>
                 {recTag}
               </div>
-              <button onClick={() => setEvents(prev=>prev.filter(e=>e.id!==ev.id))} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
+              <button onClick={async () => { await SB.deleteEvent(ev.id); setEvents(prev=>prev.filter(e=>e.id!==ev.id)); }} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
             </div>
           );
         })}
@@ -1114,13 +1251,16 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
   const [activeFreq, setActiveFreq] = useState("daily_ind");
   const [activeDow, setActiveDow] = useState(1);
 
-  function toggleAssignment(chore, memberId) {
+  async function toggleAssignment(chore, memberId) {
     setChoreAssignments(prev => {
       const current = prev[chore] || [];
       const updated = current.includes(memberId)
         ? current.filter(id => id !== memberId)
         : [...current, memberId];
-      return { ...prev, [chore]: updated };
+      const next = { ...prev, [chore]: updated };
+      // Write to Supabase
+      SB.upsertChore(chore, updated);
+      return next;
     });
   }
 
@@ -1267,9 +1407,13 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
   const sec = TASK_SECTIONS.find(s => s.id===activeSection) || TASK_SECTIONS[0];
   const currentTasks = tasks[activeMember.id]?.[sec.id] || [];
 
-  function addTask() {
+  async function addTask() {
     if (!newTask.trim()) return;
-    setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: [...(prev[activeMember.id]?.[sec.id]||[]), { id:Date.now(), label:newTask.trim(), done:false }] } }));
+    const rows = await SB.addTask(activeMember.id, sec.id, newTask.trim());
+    if (rows && rows[0]) {
+      const newT = { id: rows[0].id, label: rows[0].label, done: false };
+      setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: [...(prev[activeMember.id]?.[sec.id]||[]), newT] } }));
+    }
     setNewTask("");
   }
 
@@ -1301,7 +1445,7 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
           : currentTasks.map(task => (
             <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:6 }}>
               <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{task.label}</span>
-              <button onClick={() => setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: prev[activeMember.id][sec.id].filter(t=>t.id!==task.id) } }))} style={{ padding:"5px 10px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>✕</button>
+              <button onClick={async () => { await SB.deleteTask(task.id); setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: prev[activeMember.id][sec.id].filter(t=>t.id!==task.id) } })); }} style={{ padding:"5px 10px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>✕</button>
             </div>
           ))
         }
@@ -1314,15 +1458,16 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
   );
 }
 
-function AdminGoals({ family, goals, setGoals }) {
+function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
   const [activeMember, setActiveMember] = useState(family[2]||family[0]);
   const [activeQuad, setActiveQuad] = useState("spiritual");
   const [newGoal, setNewGoal] = useState("");
   const quad = QUAD.find(q=>q.id===activeQuad);
   const currentGoals = goals[activeMember.id]?.[activeQuad] || [];
 
-  function addGoal() {
+  async function addGoal() {
     if (!newGoal.trim()) return;
+    await SB.addGoal(activeMember.id, activeQuad, newGoal.trim());
     setGoals(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [activeQuad]: [...(prev[activeMember.id]?.[activeQuad]||[]), newGoal.trim()] } }));
     setNewGoal("");
   }
@@ -1359,7 +1504,11 @@ function AdminGoals({ family, goals, setGoals }) {
           <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:6 }}>
             <div style={{ width:8, height:8, borderRadius:"50%", background:quad.color, flexShrink:0 }} />
             <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{g}</span>
-            <button onClick={() => setGoals(prev=>({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [activeQuad]: prev[activeMember.id][activeQuad].filter((_,idx)=>idx!==i) } }))} style={{ padding:"5px 10px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>✕</button>
+            <button onClick={async () => {
+                const row = (dbGoalRows||[]).find(r => r.member_id===activeMember.id && r.quadrant===activeQuad && r.label===g);
+                if (row) await SB.deleteGoal(row.id);
+                setGoals(prev=>({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [activeQuad]: prev[activeMember.id][activeQuad].filter((_,idx)=>idx!==i) } }));
+              }} style={{ padding:"5px 10px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>✕</button>
           </div>
         ))}
       </div>
@@ -1377,13 +1526,33 @@ function AdminGoals({ family, goals, setGoals }) {
 export default function App() {
   const [page, setPage]   = useState("today");
   const [family]          = useState(FAMILY_INIT);
-  const [events, setEvents] = useState(INIT_CAL_EVENTS);
-  const [choreAssignments, setChoreAssignments] = useState(INIT_CHORE_ASSIGNMENTS);
-  const [tasks,  setTasks]  = useState(INIT_TASKS);
-  const [goals,  setGoals]  = useState(INIT_GOALS);
-  const [streaks]           = useState(INIT_STREAKS);
-  const [weekPts]           = useState(INIT_WEEK_PTS);
   const [adminMode, setAdminMode] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Supabase-backed state
+  const [events,           setEvents]           = useState([]);
+  const [choreAssignments, setChoreAssignments] = useState({});
+  const [tasks,            setTasks]            = useState(INIT_TASKS);
+  const [goals,            setGoals]            = useState(INIT_GOALS);
+  const [streaks,          setStreaks]           = useState(INIT_STREAKS);
+  const [weekPts,          setWeekPts]          = useState(INIT_WEEK_PTS);
+  const [dbTaskRows,       setDbTaskRows]        = useState([]);
+  const [dbGoalRows,       setDbGoalRows]        = useState([]);
+
+  // Load all data from Supabase on mount
+  async function loadAll() {
+    setLoading(true);
+    try {
+      const [evRows, choreRows, taskRows, goalRows] = await Promise.all([
+        SB.getEvents(), SB.getChores(), SB.getTasks(), SB.getGoals(),
+      ]);
+      if (evRows)    setEvents(dbEventsToApp(evRows));
+      if (choreRows) setChoreAssignments(dbChoresToApp(choreRows));
+      if (taskRows)  { setDbTaskRows(taskRows); setTasks(dbTasksToApp(taskRows)); }
+      if (goalRows)  { setDbGoalRows(goalRows); setGoals(dbGoalsToApp(goalRows)); }
+    } catch(e) { console.error("Load error:", e); }
+    setLoading(false);
+  }
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -1419,13 +1588,22 @@ export default function App() {
     overrideStyle.textContent = '#root { max-width: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }';
     document.head.appendChild(overrideStyle);
 
+    loadAll();
     const check = () => setAdminMode(window.location.hash === "#admin");
     check();
     window.addEventListener("hashchange", check);
     return () => window.removeEventListener("hashchange", check);
   }, []);
 
-  if (adminMode) return <AdminPage family={family} events={events} setEvents={setEvents} tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} />;
+  if (loading) return (
+    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100vh", background:T.bg, fontFamily:"'Fredoka',sans-serif", gap:16 }}>
+      <div style={{ fontSize:48 }}>🏡</div>
+      <div style={{ fontSize:20, fontWeight:700, color:T.text }}>Loading Family OS…</div>
+      <div style={{ fontSize:14, color:T.muted }}>Connecting to database</div>
+    </div>
+  );
+
+  if (adminMode) return <AdminPage family={family} events={events} setEvents={setEvents} tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} dbTaskRows={dbTaskRows} dbGoalRows={dbGoalRows} onReload={loadAll} />;
 
   const goAdmin = () => { window.location.hash = "#admin"; };
 
