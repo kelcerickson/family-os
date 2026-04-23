@@ -250,12 +250,12 @@ function CalendarPage({ family, events }) {
             </div>
           ))}
         </div>
-        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch" }}>
+        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", width:"100%", alignItems:"stretch" }}>
           {weekDates.map((date, dowIdx) => {
             const isToday = date.toDateString()===todayStr;
             const dayEvs = visibleEvents.filter(ev => ev.dow===dowIdx);
             return (
-              <div key={dowIdx} style={{ minWidth:110, flex:1, borderRight: dowIdx<6?`1px solid ${T.border}`:"none", position:"relative" }}>
+              <div key={dowIdx} style={{ minWidth:0, flex:"1 1 0%", borderRight: dowIdx<6?`1px solid ${T.border}`:"none", position:"relative" }}>
                 <div style={{ height:44, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, zIndex:9, background: isToday?T.text:T.bg, borderRadius: isToday?"0 0 12px 12px":0 }}>
                   <span style={{ fontSize:10, fontWeight:700, letterSpacing:0.5, textTransform:"uppercase", color: isToday?"rgba(255,255,255,0.6)":T.muted }}>{DAYS_SHORT[date.getDay()]}</span>
                   <span style={{ fontSize:16, fontWeight:700, color: isToday?T.white:T.text }}>{date.getDate()}</span>
@@ -294,7 +294,7 @@ function PersonColumn({ member, tasks, onToggle, points }) {
   const doneItems = Object.values(tasks).flat().filter(t => t.done).length;
 
   return (
-    <div style={{ minWidth:210, flex:1, display:"flex", flexDirection:"column", borderRight:`2px solid ${T.border}`, background: isRainbow ? RAINBOW_SOFT : T.bg, transition:"background 0.8s ease" }}>
+    <div style={{ minWidth:0, flex:"1 1 0%", display:"flex", flexDirection:"column", borderRight:`2px solid ${T.border}`, background: isRainbow ? RAINBOW_SOFT : T.bg, transition:"background 0.8s ease" }}>
       <div style={{ padding:"10px 10px 8px", flexShrink:0, position:"sticky", top:0, zIndex:5, backgroundImage: isRainbow?RAINBOW_GRAD:"none", background: isRainbow?undefined:T.white, borderBottom:`2px solid ${isRainbow?"transparent":T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
           <div style={{ width:36, height:36, borderRadius:"50%", background: isRainbow?"rgba(255,255,255,0.35)":member.light, border:`2.5px solid ${isRainbow?"rgba(255,255,255,0.8)":member.color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>{member.emoji}</div>
@@ -400,7 +400,7 @@ function TodayPage({ family }) {
       {activeMembers.length === 0 ? (
         <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:T.muted, fontSize:16, fontFamily:"'Fredoka',sans-serif" }}>Tap a name above to see their tasks 👆</div>
       ) : (
-        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x" }}>
+        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", width:"100%", alignItems:"stretch" }}>
           {activeMembers.map(m => <PersonColumn key={m.id} member={m} tasks={taskState[m.id]||{}} onToggle={toggleTask} points={pts[m.id]||0} />)}
         </div>
       )}
