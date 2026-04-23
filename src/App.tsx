@@ -275,6 +275,19 @@ function CalendarPage({ family, events }) {
   const [visibleIds, setVisibleIds] = useState(new Set(family.map(m => m.id)));
   const weekDates = getWeekDates(weekAnchor);
   const todayStr = TODAY_DATE.toDateString();
+  // Filter events based on recurrence rules for each week date
+  function eventMatchesDate(ev, date) {
+    const dow = date.getDay();
+    if (ev.recurrence === "daily") return true;
+    if (ev.recurrence === "weekly") return ev.dow === dow;
+    if (ev.recurrence === "monthly") return ev.dow === dow && date.getDate() <= 7; // 1st occurrence of that weekday
+    if (ev.recurrence === "once" && ev.specificDate) {
+      const evDate = new Date(ev.specificDate + "T00:00:00");
+      return evDate.toDateString() === date.toDateString();
+    }
+    // Legacy events without recurrence field default to weekly by dow
+    return ev.dow === dow;
+  }
   const visibleEvents = events.filter(ev => ev.memberIds.some(id => visibleIds.has(id)));
 
   return (
@@ -837,69 +850,176 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
 }
 
 function AdminCalendar({ family, events, setEvents, memberMap }) {
-  const [form, setForm] = useState({ title:"", memberIds:[], startH:9, dur:1, dow:1 });
+  const EMPTY_FORM = { title:"", memberIds:[], startH:9, dur:1, recurrence:"weekly", dow:1, specificDate:"", color:null };
+  const [form, setForm] = useState(EMPTY_FORM);
   const [showForm, setShowForm] = useState(false);
+  const [showOAuthGuide, setShowOAuthGuide] = useState(null);
   const DOW_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
   function addEvent() {
     if (!form.title || form.memberIds.length===0) return;
+    if (form.recurrence === "once" && !form.specificDate) return;
     setEvents(prev => [...prev, { ...form, id:Date.now() }]);
-    setForm({ title:"", memberIds:[], startH:9, dur:1, dow:1 });
+    setForm(EMPTY_FORM);
     setShowForm(false);
   }
+
+  function recurrenceLabel(ev) {
+    if (ev.recurrence === "once") return `Once · ${ev.specificDate}`;
+    if (ev.recurrence === "daily") return "Every day";
+    if (ev.recurrence === "weekly") return `Every ${DOW_LABELS[ev.dow]}`;
+    if (ev.recurrence === "monthly") return `Monthly · ${DOW_LABELS[ev.dow]}s`;
+    return ev.recurrence;
+  }
+
+  function formatH(h) { return h > 12 ? `${h-12}:00 PM` : h === 12 ? "12:00 PM" : `${h}:00 AM`; }
+
+  const OAUTH_STEPS = {
+    google: {
+      title: "Connect Google Calendar",
+      color: "#4285F4",
+      steps: [
+        { n:1, title:"Go to Google Cloud Console", desc:"Visit console.cloud.google.com and sign in with your Google account." },
+        { n:2, title:"Create a new project", desc:'Click "Select a project" → "New Project" → name it "Family OS" → Create.' },
+        { n:3, title:"Enable Google Calendar API", desc:'Go to "APIs & Services" → "Library" → search "Google Calendar API" → Enable.' },
+        { n:4, title:"Create OAuth credentials", desc:'Go to "APIs & Services" → "Credentials" → "Create Credentials" → "OAuth client ID" → Web application.' },
+        { n:5, title:"Add your Vercel URL", desc:'Under "Authorized redirect URIs" add: https://family-os-snowy.vercel.app/api/auth/google/callback' },
+        { n:6, title:"Copy your credentials", desc:"Copy the Client ID and Client Secret — you'll add these to Supabase environment variables." },
+        { n:7, title:"Come back to Claude", desc:"Share the Client ID and Client Secret with Claude and we'll wire up the full OAuth flow in your Supabase backend." },
+      ]
+    },
+    outlook: {
+      title: "Connect Outlook Calendar",
+      color: "#0078D4",
+      steps: [
+        { n:1, title:"Go to Azure Portal", desc:"Visit portal.azure.com and sign in with your Microsoft account." },
+        { n:2, title:"Register an app", desc:'Search "App registrations" → "New registration" → name it "Family OS" → Register.' },
+        { n:3, title:"Add redirect URI", desc:'Go to "Authentication" → "Add a platform" → "Web" → add: https://family-os-snowy.vercel.app/api/auth/outlook/callback' },
+        { n:4, title:"Add Calendar permissions", desc:'Go to "API permissions" → "Add permission" → "Microsoft Graph" → "Delegated" → add Calendars.Read.' },
+        { n:5, title:"Create a client secret", desc:'Go to "Certificates & secrets" → "New client secret" → copy the Value (not the ID).' },
+        { n:6, title:"Copy your credentials", desc:'Copy the Application (client) ID from the Overview page and the secret you just created.' },
+        { n:7, title:"Come back to Claude", desc:"Share both values with Claude and we'll wire up the Outlook OAuth flow in your backend." },
+      ]
+    }
+  };
 
   return (
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
-        <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:0 }}>Calendar Events</h2>
+        <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:0 }}>📅 Calendar Events</h2>
         <button onClick={() => setShowForm(!showForm)} style={{ background:T.text, color:"#fff", border:"none", borderRadius:12, padding:"10px 20px", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, cursor:"pointer" }}>+ Add Event</button>
       </div>
 
-      {/* Calendar Sync */}
+      {/* OAuth Setup Cards */}
       <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px 20px", marginBottom:20 }}>
-        <h3 style={{ fontSize:17, fontWeight:700, color:T.text, margin:"0 0 12px" }}>🔗 External Calendar Sync</h3>
+        <h3 style={{ fontSize:17, fontWeight:700, color:T.text, margin:"0 0 4px" }}>🔗 External Calendar Sync</h3>
+        <p style={{ fontSize:13, color:T.muted, fontFamily:"'Nunito',sans-serif", margin:"0 0 14px" }}>Connect your real calendars so events sync automatically.</p>
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
-          {[{name:"Google Calendar",icon:"📅",color:"#4285F4"},{name:"Outlook Calendar",icon:"📆",color:"#0078D4"}].map(cal => (
-            <div key={cal.name} style={{ background:"#F8F7F4", border:`2px solid ${T.border}`, borderRadius:12, padding:"14px 16px" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
-                <span style={{fontSize:22}}>{cal.icon}</span>
+          {[
+            { id:"google",  name:"Google Calendar",  icon:"📅", color:"#4285F4" },
+            { id:"outlook", name:"Outlook Calendar",  icon:"📆", color:"#0078D4" },
+          ].map(cal => (
+            <div key={cal.id} style={{ background:"#F8F7F4", border:`2px solid ${T.border}`, borderRadius:12, padding:"14px 16px" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
+                <span style={{fontSize:24}}>{cal.icon}</span>
                 <div>
                   <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{cal.name}</div>
-                  <div style={{ fontSize:11, color:T.muted, fontFamily:"'Nunito',sans-serif" }}>Connect via OAuth</div>
+                  <div style={{ fontSize:11, color:T.muted, fontFamily:"'Nunito',sans-serif" }}>Requires one-time setup</div>
                 </div>
               </div>
-              <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:10 }}>
-                {family.map(m => (
-                  <div key={m.id} style={{ padding:"5px 10px", borderRadius:8, border:`1.5px solid ${T.border}`, background:T.white, fontFamily:"'Fredoka',sans-serif", fontSize:11, color:T.sub }}>{m.emoji} {m.name}</div>
-                ))}
-              </div>
-              <button style={{ width:"100%", padding:"9px", borderRadius:10, background:cal.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600, cursor:"pointer" }}>Connect {cal.name.split(" ")[0]}</button>
+              <button
+                onClick={() => setShowOAuthGuide(showOAuthGuide===cal.id ? null : cal.id)}
+                style={{ width:"100%", padding:"10px", borderRadius:10, background:cal.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, cursor:"pointer" }}
+              >
+                {showOAuthGuide===cal.id ? "▲ Hide Setup Steps" : `▼ How to Connect ${cal.name.split(" ")[0]}`}
+              </button>
+              {showOAuthGuide===cal.id && (
+                <div style={{ marginTop:12 }}>
+                  {OAUTH_STEPS[cal.id].steps.map(step => (
+                    <div key={step.n} style={{ display:"flex", gap:10, marginBottom:10, alignItems:"flex-start" }}>
+                      <div style={{ width:24, height:24, borderRadius:"50%", background:cal.color, color:"#fff", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, flexShrink:0, marginTop:1 }}>{step.n}</div>
+                      <div>
+                        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.text }}>{step.title}</div>
+                        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.sub, marginTop:2, lineHeight:1.5 }}>{step.desc}</div>
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{ background:`${cal.color}18`, border:`1.5px solid ${cal.color}44`, borderRadius:10, padding:"10px 12px", marginTop:8 }}>
+                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.text, fontWeight:600 }}>
+                      ✅ Once you have your credentials, share them with Claude and the full sync will be wired up in about 30 minutes.
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
-        <div style={{ marginTop:12, padding:"10px 14px", background:"#FFF9E0", borderRadius:10, fontSize:12, color:"#A07820", fontFamily:"'Nunito',sans-serif" }}>
-          💡 Calendar sync requires Supabase backend + OAuth setup for Google & Outlook.
-        </div>
       </div>
 
+      {/* Add Event Form */}
       {showForm && (
         <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px 20px", marginBottom:20 }}>
           <h3 style={{ fontSize:17, fontWeight:700, color:T.text, margin:"0 0 14px" }}>New Event</h3>
+
+          {/* Title */}
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Event Title</label>
+            <input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Math Block, Soccer Practice" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+          </div>
+
+          {/* Recurrence */}
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Repeats</label>
+            <div style={{ display:"flex", gap:6 }}>
+              {[
+                { id:"once",    label:"One-time" },
+                { id:"daily",   label:"Daily" },
+                { id:"weekly",  label:"Weekly" },
+                { id:"monthly", label:"Monthly" },
+              ].map(r => (
+                <button key={r.id} onClick={() => setForm(f=>({...f,recurrence:r.id}))} style={{
+                  flex:1, padding:"9px 4px", borderRadius:10, border:"none", cursor:"pointer",
+                  background: form.recurrence===r.id ? T.text : T.stone,
+                  color: form.recurrence===r.id ? "#fff" : T.sub,
+                  fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
+                }}>{r.label}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Day picker — shown for weekly & monthly */}
+          {(form.recurrence === "weekly" || form.recurrence === "monthly") && (
+            <div style={{ marginBottom:12 }}>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>
+                {form.recurrence === "weekly" ? "Day of Week" : "Which Day Each Month"}
+              </label>
+              <div style={{ display:"flex", gap:5 }}>
+                {DOW_LABELS.map((d,i) => (
+                  <button key={i} onClick={() => setForm(f=>({...f,dow:i}))} style={{
+                    flex:1, padding:"8px 2px", borderRadius:9, border:"none", cursor:"pointer",
+                    background: form.dow===i ? "#3B6FA0" : T.stone,
+                    color: form.dow===i ? "#fff" : T.sub,
+                    fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700,
+                  }}>{d.slice(0,3)}</button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Specific date for one-time */}
+          {form.recurrence === "once" && (
+            <div style={{ marginBottom:12 }}>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Date</label>
+              <input type="date" value={form.specificDate} onChange={e=>setForm(f=>({...f,specificDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+            </div>
+          )}
+
+          {/* Time & Duration */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Title</label>
-              <input value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder="e.g. Math Block" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
-            </div>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Day</label>
-              <select value={form.dow} onChange={e=>setForm(f=>({...f,dow:+e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }}>
-                {DOW_LABELS.map((d,i) => <option key={i} value={i}>{d}</option>)}
-              </select>
-            </div>
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Time</label>
               <select value={form.startH} onChange={e=>setForm(f=>({...f,startH:+e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }}>
-                {CAL_HOURS.map(h => <option key={h} value={h}>{h>12?`${h-12}:00 PM`:h===12?"12:00 PM":`${h}:00 AM`}</option>)}
+                {CAL_HOURS.map(h => <option key={h} value={h}>{formatH(h)}</option>)}
               </select>
             </div>
             <div>
@@ -909,33 +1029,50 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
               </select>
             </div>
           </div>
-          <div style={{ marginBottom:14 }}>
+
+          {/* Who's involved */}
+          <div style={{ marginBottom:16 }}>
             <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Who's involved?</label>
             <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+              <button onClick={() => setForm(f=>({ ...f, memberIds: f.memberIds.length===family.length ? [] : family.map(m=>m.id) }))}
+                style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${form.memberIds.length===family.length ? "#2D7A56" : T.border}`, background: form.memberIds.length===family.length ? "#D5EEE2" : T.stone, cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600, color: form.memberIds.length===family.length ? "#2D7A56" : T.muted }}>
+                👨‍👩‍👧‍👦 Everyone
+              </button>
               {family.map(m => {
                 const on = form.memberIds.includes(m.id);
                 return <button key={m.id} onClick={() => setForm(f=>({...f,memberIds: on?f.memberIds.filter(id=>id!==m.id):[...f.memberIds,m.id]}))} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${on?m.color:T.border}`, background: on?m.light:T.stone, cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600, color: on?m.color:T.muted }}>{m.emoji} {m.name}</button>;
               })}
             </div>
           </div>
+
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={addEvent} style={{ flex:1, padding:"12px", borderRadius:12, background:T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>Add to Calendar</button>
-            <button onClick={() => setShowForm(false)} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, cursor:"pointer" }}>Cancel</button>
+            <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, cursor:"pointer" }}>Cancel</button>
           </div>
         </div>
       )}
 
+      {/* Event List */}
       <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px 20px" }}>
         <h3 style={{ fontSize:17, fontWeight:700, color:T.text, margin:"0 0 14px" }}>All Events ({events.length})</h3>
-        {events.map(ev => (
-          <div key={ev.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:12, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:8 }}>
-            <div style={{ flex:1 }}>
-              <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{ev.title}</div>
-              <div style={{ fontSize:11, color:T.muted, marginTop:2, fontFamily:"'Nunito',sans-serif" }}>{DOW_LABELS[ev.dow]} · {ev.startH>12?`${ev.startH-12}:00 PM`:ev.startH===12?"12:00 PM":`${ev.startH}:00 AM`} · {ev.dur}hr · {ev.memberIds.map(id=>memberMap[id]?.emoji).join(" ")}</div>
+        {events.length === 0 && <div style={{ textAlign:"center", padding:"20px 0", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No events yet — add one above</div>}
+        {events.map(ev => {
+          const recTag = { once:"One-time", daily:"Daily", weekly:"Weekly", monthly:"Monthly" }[ev.recurrence] || "Weekly";
+          return (
+            <div key={ev.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 12px", borderRadius:12, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:8 }}>
+              <div style={{ flex:1 }}>
+                <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{ev.title}</div>
+                <div style={{ fontSize:11, color:T.muted, marginTop:2, fontFamily:"'Nunito',sans-serif" }}>
+                  {recurrenceLabel(ev)} · {formatH(ev.startH)} · {ev.dur}hr · {ev.memberIds.map(id=>memberMap[id]?.emoji).join(" ")}
+                </div>
+              </div>
+              <div style={{ background: recTag==="One-time"?"#F3E5FF":recTag==="Daily"?"#D5EEE2":recTag==="Monthly"?"#FDEEDE":"#D6E8F7", color: recTag==="One-time"?"#7C5C9E":recTag==="Daily"?"#2D7A56":recTag==="Monthly"?"#D4732A":"#3B6FA0", borderRadius:99, padding:"3px 9px", fontSize:11, fontWeight:700, fontFamily:"'Fredoka',sans-serif", flexShrink:0 }}>
+                {recTag}
+              </div>
+              <button onClick={() => setEvents(prev=>prev.filter(e=>e.id!==ev.id))} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
             </div>
-            <button onClick={() => setEvents(prev=>prev.filter(e=>e.id!==ev.id))} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
