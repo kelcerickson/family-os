@@ -314,7 +314,7 @@ function PersonColumn({ member, tasks, onToggle, points }) {
           })}
         </div>
       </div>
-      <div style={{ flex:1, overflowY:"auto", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none" }}>
+      <div className="scroll-col" style={{ flex:1, overflowY:"auto", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
         {SECTIONS.map(sec => {
           const secTasks = tasks[sec.id] || [];
           const done = sectionDone(tasks, sec.id);
@@ -627,7 +627,7 @@ function ProgressPage({ family, goals, streaks, weekPts }) {
         })}
       </div>
 
-      <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 28px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none" }}>
+      <div className="scroll-col" style={{ flex:1, overflowY:"auto", padding:"16px 16px 28px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
 
         {/* Rainbow Streak */}
         <div style={{ borderRadius:22, overflow:"hidden", marginBottom:16, padding:"20px 20px 16px", position:"relative", background:"linear-gradient(135deg,#1A2F4B,#0F1E30)" }}>
@@ -950,10 +950,14 @@ export default function App() {
     document.head.appendChild(link);
     const style = document.createElement("style");
     style.textContent = `
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body, #root { margin: 0 !important; padding: 0 !important; width: 100% !important; overflow-x: hidden; }
       * { -webkit-overflow-scrolling: touch; }
-      ::-webkit-scrollbar { display: none; }
-      * { scrollbar-width: none; -ms-overflow-style: none; }
+      ::-webkit-scrollbar { display: none !important; }
+      * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
       html, body { touch-action: manipulation; }
+      .scroll-col { touch-action: pan-y !important; user-select: none !important; -webkit-user-select: none !important; overflow-y: auto !important; }
+      .scroll-col * { user-select: none !important; -webkit-user-select: none !important; pointer-events: auto; }
     `;
     document.head.appendChild(style);
     document.body.style.margin = "0";
