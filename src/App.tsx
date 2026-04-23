@@ -250,7 +250,7 @@ function CalendarPage({ family, events }) {
             </div>
           ))}
         </div>
-        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"auto" }}>
+        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch" }}>
           {weekDates.map((date, dowIdx) => {
             const isToday = date.toDateString()===todayStr;
             const dayEvs = visibleEvents.filter(ev => ev.dow===dowIdx);
@@ -314,7 +314,7 @@ function PersonColumn({ member, tasks, onToggle, points }) {
           })}
         </div>
       </div>
-      <div style={{ flex:1, overflowY:"auto", padding:"8px 8px 12px" }}>
+      <div style={{ flex:1, overflowY:"auto", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none" }}>
         {SECTIONS.map(sec => {
           const secTasks = tasks[sec.id] || [];
           const done = sectionDone(tasks, sec.id);
@@ -400,7 +400,7 @@ function TodayPage({ family }) {
       {activeMembers.length === 0 ? (
         <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:T.muted, fontSize:16, fontFamily:"'Fredoka',sans-serif" }}>Tap a name above to see their tasks 👆</div>
       ) : (
-        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden" }}>
+        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x" }}>
           {activeMembers.map(m => <PersonColumn key={m.id} member={m} tasks={taskState[m.id]||{}} onToggle={toggleTask} points={pts[m.id]||0} />)}
         </div>
       )}
@@ -627,7 +627,7 @@ function ProgressPage({ family, goals, streaks, weekPts }) {
         })}
       </div>
 
-      <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 28px" }}>
+      <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 28px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none" }}>
 
         {/* Rainbow Streak */}
         <div style={{ borderRadius:22, overflow:"hidden", marginBottom:16, padding:"20px 20px 16px", position:"relative", background:"linear-gradient(135deg,#1A2F4B,#0F1E30)" }}>
@@ -948,7 +948,19 @@ export default function App() {
     const link = document.createElement("link");
     link.href = FONT_URL; link.rel = "stylesheet";
     document.head.appendChild(link);
+    const style = document.createElement("style");
+    style.textContent = `
+      * { -webkit-overflow-scrolling: touch; }
+      ::-webkit-scrollbar { display: none; }
+      * { scrollbar-width: none; -ms-overflow-style: none; }
+      html, body { touch-action: manipulation; }
+    `;
+    document.head.appendChild(style);
     document.body.style.margin = "0";
+    document.body.style.padding = "0";
+    document.body.style.width = "100vw";
+    document.documentElement.style.margin = "0";
+    document.documentElement.style.padding = "0";
     document.body.style.background = T.bg;
     document.body.style.overscrollBehavior = "none";
 
@@ -963,7 +975,7 @@ export default function App() {
   const goAdmin = () => { window.location.hash = "#admin"; };
 
   return (
-    <div style={{ background:T.bg, minHeight:"100vh" }}>
+    <div style={{ background:T.bg, minHeight:"100vh", width:"100%", maxWidth:"100vw", overflowX:"hidden" }}>
       <TopBar onAdmin={goAdmin} />
       {page==="calendar" && <CalendarPage family={family} events={events} />}
       {page==="today"    && <TodayPage    family={family} tasks={tasks} />}
