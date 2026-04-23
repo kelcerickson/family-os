@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
 // ── Supabase Client ───────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://mitzwognijayzgqvexcl.supabase.co";
@@ -547,18 +547,9 @@ function PersonColumn({ member, tasks, onToggle, points, completions }) {
 function TodayPage({ family, choreAssignments }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
-  // Task completions loaded from Supabase per day
+  // Task completions loaded from Supabase per day (moved after viewDate)
   const [taskState, setTaskStateRaw] = useState({});
-  const [completions, setCompletions] = useState({}); // { "label|memberId": true }
-
-  useEffect(() => {
-    const dateStr = viewDate.toISOString().slice(0,10);
-    SB.getCompletions(dateStr).then(rows => {
-      const map = {};
-      (rows||[]).forEach(r => { map[r.task_label + "|" + r.member_id] = true; });
-      setCompletions(map);
-    });
-  }, [viewDate]);
+  const [completions, setCompletions] = useState({});
 
   function setTaskState(next) {
     const resolved = typeof next === "function" ? next(taskState) : next;
@@ -576,12 +567,21 @@ function TodayPage({ family, choreAssignments }) {
       setCompletions(prev => ({ ...prev, [key]: true }));
     }
   }
-  const [pts, setPts] = useState(Object.fromEntries(family.map(m => [m.id, 0])));
   const [viewDate, setViewDate] = useState(getMountainToday());
 
   function prevDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()-1); return n; }); }
   function nextDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()+1); return n; }); }
   const isToday = viewDate.toDateString() === getMountainToday().toDateString();
+
+  // Load completions from Supabase when date changes
+  useEffect(() => {
+    const dateStr = viewDate.toISOString().slice(0,10);
+    SB.getCompletions(dateStr).then(rows => {
+      const map = {};
+      (rows||[]).forEach(r => { map[r.task_label + "|" + r.member_id] = true; });
+      setCompletions(map);
+    });
+  }, [viewDate]);
 
   async function toggleTask(memberId, secId, taskLabel, currentlyDone) {
     await toggleCompletion(taskLabel, memberId, currentlyDone);
@@ -646,7 +646,11 @@ function TodayPage({ family, choreAssignments }) {
               ...storedTasks,
               contribute: choreTasks.length > 0 ? choreTasks : (storedTasks.contribute || []),
             };
-            return <PersonColumn key={m.id} member={m} tasks={mergedTasks} onToggle={toggleTask} points={pts[m.id]||0} completions={completions} />;
+            const memberPts = SECTIONS.filter(s => {
+              const items = mergedTasks[s.id] || [];
+              return items.length > 0 && items.every(t => !!(completions && completions[t.label + "|" + m.id]));
+            }).length;
+            return <PersonColumn key={m.id} member={m} tasks={mergedTasks} onToggle={toggleTask} points={memberPts} completions={completions} />;
           })}
         </div>
       )}
