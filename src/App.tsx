@@ -321,10 +321,6 @@ function TodayPage({ family }) {
   function prevDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()-1); return n; }); }
   function nextDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()+1); return n; }); }
   const isToday = viewDate.toDateString() === getMountainToday().toDateString();
-  const [viewDate, setViewDate] = useState(new Date(TODAY_DATE));
-  function prevDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()-1); return n; }); }
-  function nextDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()+1); return n; }); }
-  const isToday = viewDate.toDateString() === TODAY_DATE.toDateString();
 
   function toggleTask(memberId, secId, taskId) {
     setTaskState(prev => {
