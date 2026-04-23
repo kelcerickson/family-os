@@ -1,4 +1,23 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component } from "react";
+
+// Error boundary to catch crashes
+class ErrorBoundary extends Component {
+  state = { error: null };
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (this.state.error) return (
+      <div style={{ padding:40, fontFamily:"sans-serif", background:"#fff1f0", minHeight:"100vh" }}>
+        <h2 style={{ color:"#c00" }}>⚠️ App Error</h2>
+        <pre style={{ fontSize:12, background:"#fff", padding:16, borderRadius:8, overflow:"auto" }}>
+          {this.state.error.toString()}
+          {this.state.error.stack}
+        </pre>
+        <button onClick={() => window.location.reload()} style={{ marginTop:16, padding:"10px 20px", fontSize:16, cursor:"pointer" }}>Reload</button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
 
 // ── Supabase Client ───────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://mitzwognijayzgqvexcl.supabase.co";
@@ -1527,7 +1546,7 @@ function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
 // ════════════════════════════════════════════════════════════════════════════
 // ROOT
 // ════════════════════════════════════════════════════════════════════════════
-export default function App() {
+function AppInner() {
   const [page, setPage]   = useState("today");
   const [family]          = useState(FAMILY_INIT);
   const [adminMode, setAdminMode] = useState(false);
@@ -1547,14 +1566,19 @@ export default function App() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [evRows, choreRows, taskRows, goalRows] = await Promise.all([
-        SB.getEvents(), SB.getChores(), SB.getTasks(), SB.getGoals(),
-      ]);
-      if (evRows)    setEvents(dbEventsToApp(evRows));
-      if (choreRows) setChoreAssignments(dbChoresToApp(choreRows));
-      if (taskRows)  { setDbTaskRows(taskRows); setTasks(dbTasksToApp(taskRows)); }
-      if (goalRows)  { setDbGoalRows(goalRows); setGoals(dbGoalsToApp(goalRows)); }
-    } catch(e) { console.error("Load error:", e); }
+      const evRows = await SB.getEvents().catch(() => []);
+      const choreRows = await SB.getChores().catch(() => []);
+      const taskRows = await SB.getTasks().catch(() => []);
+      const goalRows = await SB.getGoals().catch(() => []);
+      setEvents(dbEventsToApp(evRows || []));
+      setChoreAssignments(dbChoresToApp(choreRows || []));
+      setDbTaskRows(taskRows || []);
+      setTasks(dbTasksToApp(taskRows || []));
+      setDbGoalRows(goalRows || []);
+      setGoals(dbGoalsToApp(goalRows || []));
+    } catch(e) {
+      console.error("Load error:", e);
+    }
     setLoading(false);
   }
 
@@ -1620,4 +1644,8 @@ export default function App() {
       <BottomNav page={page} onPage={setPage} />
     </div>
   );
+}
+
+export default function App() {
+  return <ErrorBoundary><AppInner /></ErrorBoundary>;
 }
