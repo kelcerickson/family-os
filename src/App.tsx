@@ -278,15 +278,17 @@ function CalendarPage({ family, events }) {
   // Filter events based on recurrence rules for each week date
   function eventMatchesDate(ev, date) {
     const dow = date.getDay();
+    // Support both old single dow and new dows array
+    const matchesDow = ev.dows ? ev.dows.includes(dow) : ev.dow === dow;
     if (ev.recurrence === "daily") return true;
-    if (ev.recurrence === "weekly") return ev.dow === dow;
-    if (ev.recurrence === "monthly") return ev.dow === dow && date.getDate() <= 7; // 1st occurrence of that weekday
+    if (ev.recurrence === "weekly") return matchesDow;
+    if (ev.recurrence === "monthly") return matchesDow && date.getDate() <= 7;
     if (ev.recurrence === "once" && ev.specificDate) {
       const evDate = new Date(ev.specificDate + "T00:00:00");
       return evDate.toDateString() === date.toDateString();
     }
-    // Legacy events without recurrence field default to weekly by dow
-    return ev.dow === dow;
+    // Legacy events default to weekly by dow
+    return matchesDow;
   }
   const visibleEvents = events.filter(ev => ev.memberIds.some(id => visibleIds.has(id)));
 
@@ -850,7 +852,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
 }
 
 function AdminCalendar({ family, events, setEvents, memberMap }) {
-  const EMPTY_FORM = { title:"", memberIds:[], startH:9, dur:1, recurrence:"weekly", dow:1, specificDate:"", color:null };
+  const EMPTY_FORM = { title:"", memberIds:[], startH:9, dur:1, recurrence:"weekly", dows:[1], specificDate:"", color:null };
   const [form, setForm] = useState(EMPTY_FORM);
   const [showForm, setShowForm] = useState(false);
   const [showOAuthGuide, setShowOAuthGuide] = useState(null);
@@ -859,6 +861,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   function addEvent() {
     if (!form.title || form.memberIds.length===0) return;
     if (form.recurrence === "once" && !form.specificDate) return;
+    if ((form.recurrence === "weekly" || form.recurrence === "monthly") && (!form.dows || form.dows.length === 0)) return;
     setEvents(prev => [...prev, { ...form, id:Date.now() }]);
     setForm(EMPTY_FORM);
     setShowForm(false);
@@ -867,8 +870,9 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   function recurrenceLabel(ev) {
     if (ev.recurrence === "once") return `Once · ${ev.specificDate}`;
     if (ev.recurrence === "daily") return "Every day";
-    if (ev.recurrence === "weekly") return `Every ${DOW_LABELS[ev.dow]}`;
-    if (ev.recurrence === "monthly") return `Monthly · ${DOW_LABELS[ev.dow]}s`;
+    const days = ev.dows ? ev.dows.map(i=>DOW_LABELS[i].slice(0,3)).join(", ") : (ev.dow !== undefined ? DOW_LABELS[ev.dow] : "");
+    if (ev.recurrence === "weekly") return `Every ${days}`;
+    if (ev.recurrence === "monthly") return `Monthly · ${days}`;
     return ev.recurrence;
   }
 
@@ -987,22 +991,38 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
             </div>
           </div>
 
-          {/* Day picker — shown for weekly & monthly */}
+          {/* Day picker — multi-select for weekly & monthly */}
           {(form.recurrence === "weekly" || form.recurrence === "monthly") && (
             <div style={{ marginBottom:12 }}>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>
-                {form.recurrence === "weekly" ? "Day of Week" : "Which Day Each Month"}
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>
+                {form.recurrence === "weekly" ? "Days of Week" : "Which Days Each Month"}
+                <span style={{ fontWeight:400, color:T.muted, marginLeft:6 }}>— tap to select multiple</span>
               </label>
               <div style={{ display:"flex", gap:5 }}>
-                {DOW_LABELS.map((d,i) => (
-                  <button key={i} onClick={() => setForm(f=>({...f,dow:i}))} style={{
-                    flex:1, padding:"8px 2px", borderRadius:9, border:"none", cursor:"pointer",
-                    background: form.dow===i ? "#3B6FA0" : T.stone,
-                    color: form.dow===i ? "#fff" : T.sub,
-                    fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700,
-                  }}>{d.slice(0,3)}</button>
-                ))}
+                {DOW_LABELS.map((d,i) => {
+                  const on = (form.dows||[]).includes(i);
+                  return (
+                    <button key={i} onClick={() => setForm(f => {
+                      const cur = f.dows || [];
+                      return { ...f, dows: on ? cur.filter(x=>x!==i) : [...cur, i].sort() };
+                    })} style={{
+                      flex:1, padding:"8px 2px", borderRadius:9, border:`2px solid ${on?"#3B6FA0":"transparent"}`, cursor:"pointer",
+                      background: on ? "#3B6FA0" : T.stone,
+                      color: on ? "#fff" : T.sub,
+                      fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700,
+                      transition:"all 0.15s",
+                    }}>{d.slice(0,3)}</button>
+                  );
+                })}
               </div>
+              {(form.dows||[]).length === 0 && (
+                <div style={{ fontSize:11, color:"#DC2626", fontFamily:"'Nunito',sans-serif", marginTop:5 }}>Please select at least one day</div>
+              )}
+              {(form.dows||[]).length > 0 && (
+                <div style={{ fontSize:11, color:T.muted, fontFamily:"'Nunito',sans-serif", marginTop:5 }}>
+                  Selected: {(form.dows||[]).map(i=>DOW_LABELS[i]).join(", ")}
+                </div>
+              )}
             </div>
           )}
 
