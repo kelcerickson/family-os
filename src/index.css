@@ -1,2 +1,29 @@
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body, #root { width: 100vw; max-width: 100vw; overflow-x: hidden; margin: 0; padding: 0; }
+/* Override ALL Vite defaults */
+#root {
+  max-width: 100% !important;
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+html, body {
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+  overflow-x: hidden !important;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box !important;
+}
+
+::-webkit-scrollbar { display: none !important; }
+* { scrollbar-width: none !important; }
+
+.scroll-col {
+  -webkit-overflow-scrolling: touch !important;
+  touch-action: pan-y !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  overflow-y: auto !important;
+}
