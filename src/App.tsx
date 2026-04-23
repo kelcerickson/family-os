@@ -968,6 +968,16 @@ export default function App() {
     document.body.style.background = T.bg;
     document.body.style.overscrollBehavior = "none";
 
+    // Override any Vite default styles on #root
+    const rootEl = document.getElementById('root');
+    if (rootEl) {
+      rootEl.style.cssText = 'max-width:100% !important; width:100% !important; margin:0 !important; padding:0 !important;';
+    }
+    // Inject a style tag to permanently override #root
+    const overrideStyle = document.createElement('style');
+    overrideStyle.textContent = '#root { max-width: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }';
+    document.head.appendChild(overrideStyle);
+
     const check = () => setAdminMode(window.location.hash === "#admin");
     check();
     window.addEventListener("hashchange", check);
