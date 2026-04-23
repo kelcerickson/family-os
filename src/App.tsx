@@ -400,7 +400,7 @@ function TodayPage({ family }) {
       {activeMembers.length === 0 ? (
         <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:T.muted, fontSize:16, fontFamily:"'Fredoka',sans-serif" }}>Tap a name above to see their tasks 👆</div>
       ) : (
-        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", width:"100%", alignItems:"stretch" }}>
+        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", width:"100vw", alignItems:"stretch" }}>
           {activeMembers.map(m => <PersonColumn key={m.id} member={m} tasks={taskState[m.id]||{}} onToggle={toggleTask} points={pts[m.id]||0} />)}
         </div>
       )}
@@ -979,7 +979,7 @@ export default function App() {
   const goAdmin = () => { window.location.hash = "#admin"; };
 
   return (
-    <div style={{ background:T.bg, position:"fixed", top:0, left:0, right:0, bottom:0, width:"100vw", height:"100vh", overflowY:"auto" }}>
+    <div style={{ background:T.bg, width:"100vw", minHeight:"100vh", overflowX:"hidden" }}>
       <TopBar onAdmin={goAdmin} />
       {page==="calendar" && <CalendarPage family={family} events={events} />}
       {page==="today"    && <TodayPage    family={family} tasks={tasks} />}
