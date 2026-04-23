@@ -1,12 +1,25 @@
 <!DOCTYPE html>
-<html lang="en">
+<html style="margin:0;padding:0;width:100%;overflow-x:hidden;">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Family OS</title>
+    <style>
+      html, body, #root {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow-x: hidden !important;
+        min-height: 100vh !important;
+      }
+      *, *::before, *::after {
+        box-sizing: border-box !important;
+      }
+    </style>
   </head>
-  <body>
-    <div id="root"></div>
+  <body style="margin:0;padding:0;width:100%;overflow-x:hidden;">
+    <div id="root" style="margin:0;padding:0;width:100%;min-height:100vh;display:block;"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
