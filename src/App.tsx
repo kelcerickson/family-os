@@ -58,7 +58,7 @@ const SB = {
 
   // Tasks (template tasks per member/section)
   getTasks:    () => sb("tasks", "GET", null, "?order=sort_order"),
-  addTask:     (memberId, section, label) => sb("tasks", "POST", { member_id: memberId, section, label }),
+  addTask:     (memberId, section, label, recurrence="daily", dows=[1,2,3,4,5], specificDate=null) => sb("tasks", "POST", { member_id: memberId, section, label, recurrence, dows, specific_date: specificDate||null }),
   deleteTask:  (id) => sb(`tasks?id=eq.${id}`, "DELETE"),
 
   // Task completions
@@ -97,7 +97,12 @@ function dbTasksToApp(rows) {
   const result = {};
   (rows||[]).forEach(r => {
     if (!result[r.member_id]) result[r.member_id] = { learn:[], exercise:[], contribute:[], goals:[] };
-    if (result[r.member_id][r.section]) result[r.member_id][r.section].push({ id: r.id, label: r.label, done: false });
+    if (result[r.member_id][r.section]) result[r.member_id][r.section].push({
+      id: r.id, label: r.label, done: false,
+      recurrence: r.recurrence || "daily",
+      dows: r.dows || [1,2,3,4,5],
+      specificDate: r.specific_date || null,
+    });
   });
   return result;
 }
@@ -568,7 +573,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions }) {
   );
 }
 
-function TodayPage({ family, choreAssignments }) {
+function TodayPage({ family, tasks: dbTasks, choreAssignments }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
   // Task completions loaded from Supabase per day (moved after viewDate)
@@ -664,11 +669,23 @@ function TodayPage({ family, choreAssignments }) {
           {activeMembers.map(m => {
             // Merge stored tasks with auto-generated chore tasks for today
             const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments);
-            const storedTasks = taskState[m.id] || {};
-            // Use chore tasks for contribute, stored for others
+            // Use tasks from Supabase, filtered by recurrence for viewDate
+            const dbMemberTasks = dbTasks[m.id] || { learn:[], exercise:[], contribute:[], goals:[] };
+            function filterByDate(taskList) {
+              return taskList.filter(t => {
+                if (!t.recurrence || t.recurrence === "daily") return true;
+                if (t.recurrence === "weekly") return (t.dows||[1,2,3,4,5]).includes(viewDate.getDay());
+                if (t.recurrence === "once" && t.specificDate) {
+                  return new Date(t.specificDate+"T00:00:00").toDateString() === viewDate.toDateString();
+                }
+                return true;
+              });
+            }
             const mergedTasks = {
-              ...storedTasks,
-              contribute: choreTasks.length > 0 ? choreTasks : (storedTasks.contribute || []),
+              learn:      filterByDate(dbMemberTasks.learn || []),
+              exercise:   filterByDate(dbMemberTasks.exercise || []),
+              goals:      filterByDate(dbMemberTasks.goals || []),
+              contribute: choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute || []),
             };
             const memberPts = SECTIONS.filter(s => {
               const items = mergedTasks[s.id] || [];
@@ -1429,20 +1446,45 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
 function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignments }) {
   const [activeMember, setActiveMember] = useState(family[0]);
   const [activeSection, setActiveSection] = useState("learn");
-  const [newTask, setNewTask] = useState("");
-  // Only show Learn, Exercise, Goals here (Contribute is handled by Chores tab)
+  const [showForm, setShowForm] = useState(false);
   const TASK_SECTIONS = SECTIONS.filter(s => s.id !== "contribute");
   const sec = TASK_SECTIONS.find(s => s.id===activeSection) || TASK_SECTIONS[0];
   const currentTasks = tasks[activeMember.id]?.[sec.id] || [];
+  const DOW_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  const EMPTY_FORM = { label:"", recurrence:"daily", dows:[1,2,3,4,5], specificDate:"" };
+  const [form, setForm] = useState(EMPTY_FORM);
+
+  function taskRecurrenceLabel(task) {
+    if (!task.recurrence || task.recurrence === "daily") return "Every day";
+    if (task.recurrence === "weekly") {
+      const days = (task.dows||[]).map(i=>DOW_LABELS[i]).join(", ");
+      return `Every ${days}`;
+    }
+    if (task.recurrence === "once") return `Once · ${task.specificDate||""}`;
+    return task.recurrence;
+  }
+
+  function taskMatchesDate(task, date) {
+    if (!task.recurrence || task.recurrence === "daily") return true;
+    if (task.recurrence === "weekly") return (task.dows||[]).includes(date.getDay());
+    if (task.recurrence === "once" && task.specificDate) {
+      return new Date(task.specificDate+"T00:00:00").toDateString() === date.toDateString();
+    }
+    return true;
+  }
 
   async function addTask() {
-    if (!newTask.trim()) return;
-    const rows = await SB.addTask(activeMember.id, sec.id, newTask.trim());
+    if (!form.label.trim()) return;
+    if (form.recurrence === "once" && !form.specificDate) return;
+    if (form.recurrence === "weekly" && form.dows.length === 0) return;
+    const rows = await SB.addTask(activeMember.id, sec.id, form.label.trim(), form.recurrence, form.dows, form.specificDate);
     if (rows && rows[0]) {
-      const newT = { id: rows[0].id, label: rows[0].label, done: false };
+      const newT = { id: rows[0].id, label: rows[0].label, done: false, recurrence: rows[0].recurrence, dows: rows[0].dows, specificDate: rows[0].specific_date };
       setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: [...(prev[activeMember.id]?.[sec.id]||[]), newT] } }));
     }
-    setNewTask("");
+    setForm(EMPTY_FORM);
+    setShowForm(false);
   }
 
   return (
@@ -1451,6 +1493,8 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
       <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>
         Add Learn, Exercise, and Goals tasks per person. For chores, use the 🧹 Chores tab.
       </p>
+
+      {/* Member selector */}
       <div style={{ display:"flex", gap:8, marginBottom:16, overflowX:"auto" }}>
         {family.map(m => (
           <button key={m.id} onClick={() => setActiveMember(m)} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", borderRadius:99, flexShrink:0, cursor:"pointer", background: activeMember.id===m.id?m.color:T.stone, border: activeMember.id===m.id?`2px solid ${m.color}`:"2px solid transparent" }}>
@@ -1459,6 +1503,8 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
           </button>
         ))}
       </div>
+
+      {/* Section selector */}
       <div style={{ display:"flex", gap:6, marginBottom:16 }}>
         {TASK_SECTIONS.map(s => (
           <button key={s.id} onClick={() => setActiveSection(s.id)} style={{ flex:1, padding:"10px 8px", borderRadius:12, border:"none", cursor:"pointer", background: sec.id===s.id?s.color:T.stone, color: sec.id===s.id?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>
@@ -1466,22 +1512,95 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
           </button>
         ))}
       </div>
+
+      {/* Task list */}
       <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px", marginBottom:14 }}>
-        <div style={{ fontSize:16, fontWeight:700, color:T.text, marginBottom:12 }}>{activeMember.name}'s {sec.label} Tasks</div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+          <div style={{ fontSize:16, fontWeight:700, color:T.text }}>{activeMember.name}'s {sec.label} Tasks</div>
+          <button onClick={() => setShowForm(!showForm)} style={{ background:sec.color, color:"#fff", border:"none", borderRadius:10, padding:"7px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, cursor:"pointer" }}>+ Add Task</button>
+        </div>
         {currentTasks.length===0
-          ? <div style={{ textAlign:"center", padding:"16px 0", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No tasks yet — add one below</div>
+          ? <div style={{ textAlign:"center", padding:"16px 0", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No tasks yet — add one above</div>
           : currentTasks.map(task => (
             <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:6 }}>
-              <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{task.label}</span>
+              <div style={{ flex:1 }}>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{task.label}</div>
+                <div style={{ fontSize:11, color:T.muted, marginTop:2, fontFamily:"'Nunito',sans-serif" }}>{taskRecurrenceLabel(task)}</div>
+              </div>
               <button onClick={async () => { await SB.deleteTask(task.id); setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: prev[activeMember.id][sec.id].filter(t=>t.id!==task.id) } })); }} style={{ padding:"5px 10px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>✕</button>
             </div>
           ))
         }
       </div>
-      <div style={{ display:"flex", gap:10 }}>
-        <input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()} placeholder={`Add a ${sec.label.toLowerCase()} task for ${activeMember.name}…`} style={{ flex:1, padding:"12px 16px", borderRadius:12, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14 }} />
-        <button onClick={addTask} style={{ padding:"12px 20px", borderRadius:12, background:sec.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>Add</button>
-      </div>
+
+      {/* Add task form */}
+      {showForm && (
+        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px", marginBottom:14 }}>
+          <h3 style={{ fontSize:16, fontWeight:700, color:T.text, margin:"0 0 14px" }}>New {sec.label} Task</h3>
+
+          {/* Label */}
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Task Description</label>
+            <input value={form.label} onChange={e=>setForm(f=>({...f,label:e.target.value}))}
+              placeholder={`e.g. ${sec.id==="learn"?"Read 30 minutes":sec.id==="exercise"?"20 min run":"Write in journal"}`}
+              style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+          </div>
+
+          {/* Recurrence */}
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Repeats</label>
+            <div style={{ display:"flex", gap:6 }}>
+              {[{id:"once",label:"One-time"},{id:"daily",label:"Daily"},{id:"weekly",label:"Weekly"}].map(r => (
+                <button key={r.id} onClick={() => setForm(f=>({...f,recurrence:r.id}))} style={{
+                  flex:1, padding:"9px 4px", borderRadius:10, border:"none", cursor:"pointer",
+                  background: form.recurrence===r.id ? T.text : T.stone,
+                  color: form.recurrence===r.id ? "#fff" : T.sub,
+                  fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
+                }}>{r.label}</button>
+              ))}
+            </div>
+          </div>
+
+          {/* Day picker for weekly */}
+          {form.recurrence === "weekly" && (
+            <div style={{ marginBottom:12 }}>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>
+                Days of Week <span style={{ fontWeight:400, color:T.muted }}>— tap to select multiple</span>
+              </label>
+              <div style={{ display:"flex", gap:5 }}>
+                {DOW_LABELS.map((d,i) => {
+                  const on = form.dows.includes(i);
+                  return (
+                    <button key={i} onClick={() => setForm(f => ({ ...f, dows: on?f.dows.filter(x=>x!==i):[...f.dows,i].sort() }))}
+                      style={{ flex:1, padding:"8px 2px", borderRadius:9, border:`2px solid ${on?sec.color:"transparent"}`, cursor:"pointer", background: on?sec.color:T.stone, color: on?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700 }}>
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+              {form.dows.length > 0 && (
+                <div style={{ fontSize:11, color:T.muted, fontFamily:"'Nunito',sans-serif", marginTop:5 }}>
+                  Selected: {form.dows.map(i=>["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][i]).join(", ")}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Specific date for one-time */}
+          {form.recurrence === "once" && (
+            <div style={{ marginBottom:12 }}>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Date</label>
+              <input type="date" value={form.specificDate} onChange={e=>setForm(f=>({...f,specificDate:e.target.value}))}
+                style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+            </div>
+          )}
+
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={addTask} style={{ flex:1, padding:"12px", borderRadius:12, background:sec.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>Add Task</button>
+            <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, cursor:"pointer" }}>Cancel</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
