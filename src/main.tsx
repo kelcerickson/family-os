@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
+import App from './App.tsx'
 
 // Force full bleed before anything renders
 document.documentElement.style.cssText = 'margin:0;padding:0;width:100%;overflow-x:hidden;';
