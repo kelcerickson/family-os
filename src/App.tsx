@@ -62,6 +62,124 @@ const INIT_GOALS = {
 const INIT_STREAKS  = { dad:0, mom:0, bazel:0, okrie:0, saya:0 };
 const INIT_WEEK_PTS = { dad:0, mom:0, bazel:0, okrie:0, saya:0 };
 
+// ── Chore Schedule Data ───────────────────────────────────────────────────────
+// Daily chores: auto-assigned to ALL family members every day
+const DAILY_CHORES_ALL = [
+  "Make bed",
+  "Pick up bedroom",
+  "Clean bathroom counters",
+];
+
+// Daily chores: individually assigned (stored in CHORE_ASSIGNMENTS)
+const DAILY_CHORES_INDIVIDUAL = [
+  "Wash dishes",
+  "Unload dishwasher",
+  "Clean kitchen countertop",
+  "Clean kitchen tabletop",
+  "Clean kitchen stovetop",
+  "Pick up family room",
+];
+
+// Weekly chores by day of week (0=Sun, 1=Mon, ... 6=Sat)
+const WEEKLY_CHORES = {
+  0: ["Wash bedsheets","Wash towels","Do laundry","Dust bedroom","Vacuum bedroom","Meal prep"],
+  1: ["Clean tub","Clean bathroom sink","Clean mirror","Clean toilet","Sweep bathroom","Mop bathroom","Empty trash"],
+  2: ["Wipe appliances","Clean cupboard","Clean stove","Clean sink","Vacuum kitchen","Mop kitchen","Empty trash"],
+  3: ["Take out trash","Clean desks","Dust workspace","Vacuum workspace","Push in chairs","Organize supplies"],
+  4: ["Tidy pantry","Vacuum family room","Vacuum couches","De-clutter closet","Clean under couch","Do laundry"],
+  5: ["Pick up mud room","Vacuum hallway","Mop hallway","Clean fridge","De-clutter laundry","Vacuum laundry","Mop laundry"],
+  6: ["De-clutter car","Vacuum car","Pick up media room","Vacuum media room","Vacuum couch","Clean under couch","De-clutter closet"],
+};
+
+const MONTHLY_CHORES = [
+  "Deep clean fridge","Clean out pantry","Replace air filters","Clean walls",
+  "Wipe doors, knobs, lightswitches","Dust fans & vents","De-clutter mudroom",
+];
+
+const QUARTERLY_CHORES = [
+  "Dust blinds","Deep clean oven","Deep clean dishwasher","Deep clean washer/dryer","Clean outdoor vents",
+];
+
+const SEMI_ANNUAL_CHORES = [
+  "Wash windows","Clean carpet","Refresh & de-clutter decor","Inspect & clean vents","Clean porch","Clean baseboards",
+];
+
+const ANNUAL_CHORES = [
+  "Clear out storage","Reassess belongings","Replace bulbs","Test smoke alarms",
+  "Scrub walls","Clean out freezer","Clean out gutter","Wash curtains",
+];
+
+// CHORE_ASSIGNMENTS: { choreLabel: [memberId, ...] }
+// Stored in state, edited in Admin
+const INIT_CHORE_ASSIGNMENTS = {};
+
+// Helper: get chores for a specific date
+function getChoresForDate(date, choreAssignments) {
+  const dow = date.getDay(); // 0=Sun
+  const day = date.getDate();
+  const month = date.getMonth();
+
+  // Is it the 1st Thursday of the month?
+  function isFirstThursday(d) {
+    return d.getDay() === 4 && d.getDate() <= 7;
+  }
+  // Is it the 1st Thursday of a quarter? (Jan, Apr, Jul, Oct)
+  function isFirstThursdayOfQuarter(d) {
+    return isFirstThursday(d) && [0,3,6,9].includes(d.getMonth());
+  }
+  // Is it the 1st Thursday of semi-annual? (Jan, Jul)
+  function isFirstThursdayOfSemiAnnual(d) {
+    return isFirstThursday(d) && [0,6].includes(d.getMonth());
+  }
+  // Is it Jan 1st Thursday (annual)?
+  function isFirstThursdayOfYear(d) {
+    return isFirstThursday(d) && d.getMonth() === 0;
+  }
+
+  let allChores = [];
+
+  // Always add daily-all chores
+  DAILY_CHORES_ALL.forEach(c => allChores.push({ label:c, assignedTo:"all" }));
+
+  // Add weekly chores for this day
+  (WEEKLY_CHORES[dow] || []).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+
+  // Add daily-individual chores
+  DAILY_CHORES_INDIVIDUAL.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+
+  // Monthly
+  if (isFirstThursday(date)) {
+    MONTHLY_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly" }));
+  }
+
+  // Quarterly
+  if (isFirstThursdayOfQuarter(date)) {
+    QUARTERLY_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly" }));
+  }
+
+  // Semi-annual
+  if (isFirstThursdayOfSemiAnnual(date)) {
+    SEMI_ANNUAL_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
+  }
+
+  // Annual
+  if (isFirstThursdayOfYear(date)) {
+    ANNUAL_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"annual" }));
+  }
+
+  return allChores;
+}
+
+// Build contribute tasks for each member on a given date
+function getContributeTasksForMember(memberId, date, choreAssignments) {
+  const allChores = getChoresForDate(date, choreAssignments);
+  return allChores
+    .filter(c => c.assignedTo === "all" || (Array.isArray(c.assignedTo) && c.assignedTo.includes(memberId)))
+    .map((c, i) => ({ id: i+1, label: c.label, done: false, freq: c.freq || "daily" }));
+}
+
+
+
 // Use real current date in Mountain Time
 function getMountainToday() {
   const now = new Date();
@@ -311,7 +429,7 @@ function PersonColumn({ member, tasks, onToggle, points }) {
   );
 }
 
-function TodayPage({ family }) {
+function TodayPage({ family, choreAssignments }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
   const [taskState, setTaskState] = useState(() => JSON.parse(JSON.stringify(INIT_TASKS)));
@@ -382,7 +500,17 @@ function TodayPage({ family }) {
         <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:T.muted, fontSize:16, fontFamily:"'Fredoka',sans-serif" }}>Tap a name above to see their tasks 👆</div>
       ) : (
         <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", width:"100vw", alignItems:"stretch" }}>
-          {activeMembers.map(m => <PersonColumn key={m.id} member={m} tasks={taskState[m.id]||{}} onToggle={toggleTask} points={pts[m.id]||0} />)}
+          {activeMembers.map(m => {
+            // Merge stored tasks with auto-generated chore tasks for today
+            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments);
+            const storedTasks = taskState[m.id] || {};
+            // Use chore tasks for contribute, stored for others
+            const mergedTasks = {
+              ...storedTasks,
+              contribute: choreTasks.length > 0 ? choreTasks : (storedTasks.contribute || []),
+            };
+            return <PersonColumn key={m.id} member={m} tasks={mergedTasks} onToggle={toggleTask} points={pts[m.id]||0} />;
+          })}
         </div>
       )}
     </div>
@@ -675,7 +803,7 @@ function ProgressPage({ family, goals, streaks, weekPts }) {
 // ════════════════════════════════════════════════════════════════════════════
 // ADMIN PAGE
 // ════════════════════════════════════════════════════════════════════════════
-function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals }) {
+function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments }) {
   const [tab, setTab] = useState("calendar");
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
 
@@ -692,7 +820,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
           </div>
         </div>
         <div style={{ display:"flex", gap:2 }}>
-          {[{id:"calendar",label:"📅 Calendar"},{id:"tasks",label:"⚡ Tasks"},{id:"goals",label:"🎯 Goals"}].map(t => (
+          {[{id:"calendar",label:"📅 Calendar"},{id:"chores",label:"🧹 Chores"},{id:"tasks",label:"⚡ Tasks"},{id:"goals",label:"🎯 Goals"}].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{ padding:"10px 18px", borderRadius:"10px 10px 0 0", border:"none", cursor:"pointer", background: tab===t.id?"#F0EEE9":"transparent", color: tab===t.id?T.text:"rgba(255,255,255,0.6)", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600 }}>{t.label}</button>
           ))}
         </div>
@@ -700,6 +828,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
 
       <div style={{ padding:"24px 24px 60px", maxWidth:900, margin:"0 auto" }}>
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
+        {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
         {tab==="goals"    && <AdminGoals    family={family} goals={goals}   setGoals={setGoals} />}
       </div>
@@ -812,40 +941,213 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   );
 }
 
-function AdminTasks({ family, tasks, setTasks }) {
+// ── Admin: Chores ─────────────────────────────────────────────────────────────
+const DOW_LABELS_FULL = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const FREQ_GROUPS = [
+  { id:"daily_all",    label:"Daily (Everyone)",  color:"#4D96FF", chores: DAILY_CHORES_ALL,      desc:"Auto-assigned to all family members every day" },
+  { id:"daily_ind",   label:"Daily (Assign)",     color:"#6BCB77", chores: DAILY_CHORES_INDIVIDUAL, desc:"Assign to specific people — shows up every day" },
+  { id:"weekly",      label:"Weekly",              color:"#FF9F45", chores: null,                   desc:"Assign by day of week" },
+  { id:"monthly",     label:"Monthly",             color:"#C77DFF", chores: MONTHLY_CHORES,         desc:"Appears on the 1st Thursday of each month" },
+  { id:"quarterly",   label:"Quarterly",           color:"#FF6B6B", chores: QUARTERLY_CHORES,       desc:"Appears on the 1st Thursday of each quarter" },
+  { id:"semi_annual", label:"Semi-Annual",         color:"#E8824A", chores: SEMI_ANNUAL_CHORES,     desc:"Appears on the 1st Thursday of Jan & Jul" },
+  { id:"annual",      label:"Annual",              color:"#2D7A56", chores: ANNUAL_CHORES,          desc:"Appears on the 1st Thursday of January" },
+];
+
+function AdminChores({ family, choreAssignments, setChoreAssignments }) {
+  const [activeFreq, setActiveFreq] = useState("daily_ind");
+  const [activeDow, setActiveDow] = useState(1);
+
+  function toggleAssignment(chore, memberId) {
+    setChoreAssignments(prev => {
+      const current = prev[chore] || [];
+      const updated = current.includes(memberId)
+        ? current.filter(id => id !== memberId)
+        : [...current, memberId];
+      return { ...prev, [chore]: updated };
+    });
+  }
+
+  const freq = FREQ_GROUPS.find(f => f.id === activeFreq);
+  const choresForView = activeFreq === "weekly"
+    ? (WEEKLY_CHORES[activeDow] || [])
+    : (freq?.chores || []);
+
+  return (
+    <div>
+      <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>🧹 Chore Assignment</h2>
+      <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>
+        Assign chores to family members. They automatically appear on the Today page on the right day.
+      </p>
+
+      {/* Frequency tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", paddingBottom:4 }}>
+        {FREQ_GROUPS.map(f => (
+          <button key={f.id} onClick={() => setActiveFreq(f.id)} style={{
+            padding:"8px 14px", borderRadius:99, border:"none", cursor:"pointer", flexShrink:0,
+            background: activeFreq===f.id ? f.color : T.stone,
+            color: activeFreq===f.id ? "#fff" : T.sub,
+            fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
+          }}>{f.label}</button>
+        ))}
+      </div>
+
+      {/* Description */}
+      <div style={{ background:freq.color+"18", border:`1.5px solid ${freq.color}44`, borderRadius:12, padding:"10px 14px", marginBottom:16 }}>
+        <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.sub }}>{freq.desc}</span>
+      </div>
+
+      {/* Day of week picker for weekly */}
+      {activeFreq === "weekly" && (
+        <div style={{ display:"flex", gap:6, marginBottom:16 }}>
+          {DOW_LABELS_FULL.map((d, i) => (
+            <button key={i} onClick={() => setActiveDow(i)} style={{
+              flex:1, padding:"8px 4px", borderRadius:10, border:"none", cursor:"pointer",
+              background: activeDow===i ? freq.color : T.stone,
+              color: activeDow===i ? "#fff" : T.sub,
+              fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700,
+            }}>{d.slice(0,3)}</button>
+          ))}
+        </div>
+      )}
+
+      {/* Daily-all notice */}
+      {activeFreq === "daily_all" && (
+        <div style={{ background:"#F0FDF4", border:"1.5px solid #86EFAC", borderRadius:12, padding:"12px 16px", marginBottom:16 }}>
+          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:"#166534", fontWeight:600 }}>
+            ✅ These chores are automatically assigned to everyone — no action needed.
+          </div>
+          <div style={{ marginTop:8, display:"flex", flexWrap:"wrap", gap:6 }}>
+            {DAILY_CHORES_ALL.map(c => (
+              <div key={c} style={{ background:"#DCFCE7", color:"#166534", borderRadius:99, padding:"4px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600 }}>{c}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Chore assignment grid */}
+      {activeFreq !== "daily_all" && (
+        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, overflow:"hidden" }}>
+          {/* Header row */}
+          <div style={{ display:"grid", gridTemplateColumns:`1fr ${family.map(()=>"64px").join(" ")}`, background:T.stone, padding:"10px 16px", gap:8 }}>
+            <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub }}>Chore</div>
+            {family.map(m => (
+              <div key={m.id} style={{ textAlign:"center", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color:T.sub }}>
+                {m.emoji}<br/>{m.name}
+              </div>
+            ))}
+          </div>
+
+          {/* Chore rows */}
+          {choresForView.length === 0 && (
+            <div style={{ textAlign:"center", padding:"24px", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No chores for this selection</div>
+          )}
+          {choresForView.map((chore, i) => {
+            const assigned = choreAssignments[chore] || [];
+            return (
+              <div key={chore} style={{
+                display:"grid", gridTemplateColumns:`1fr ${family.map(()=>"64px").join(" ")}`,
+                padding:"10px 16px", gap:8, alignItems:"center",
+                background: i%2===0 ? T.white : "#FAFAF8",
+                borderTop: `1px solid ${T.border}`,
+              }}>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{chore}</div>
+                {family.map(m => {
+                  const isOn = assigned.includes(m.id);
+                  return (
+                    <div key={m.id} style={{ display:"flex", justifyContent:"center" }}>
+                      <button
+                        onClick={() => toggleAssignment(chore, m.id)}
+                        style={{
+                          width:36, height:36, borderRadius:"50%",
+                          border:`2.5px solid ${isOn ? m.color : T.border}`,
+                          background: isOn ? m.color : "transparent",
+                          cursor:"pointer", fontSize:16, display:"flex",
+                          alignItems:"center", justifyContent:"center",
+                          transition:"all 0.15s",
+                        }}
+                      >
+                        {isOn ? <span style={{ color:"#fff", fontSize:14 }}>✓</span> : ""}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Summary */}
+      {activeFreq !== "daily_all" && (
+        <div style={{ marginTop:16 }}>
+          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:T.text, marginBottom:8 }}>Assignment Summary</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {family.map(m => {
+              const count = choresForView.filter(c => (choreAssignments[c]||[]).includes(m.id)).length;
+              return (
+                <div key={m.id} style={{ background:m.light, border:`1.5px solid ${m.color}44`, borderRadius:12, padding:"8px 14px", display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{fontSize:18}}>{m.emoji}</span>
+                  <div>
+                    <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:m.color }}>{m.name}</div>
+                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>{count} chore{count!==1?"s":""} assigned</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignments }) {
   const [activeMember, setActiveMember] = useState(family[0]);
   const [activeSection, setActiveSection] = useState("learn");
   const [newTask, setNewTask] = useState("");
-  const sec = SECTIONS.find(s => s.id===activeSection);
-  const currentTasks = tasks[activeMember.id]?.[activeSection] || [];
+  // Only show Learn, Exercise, Goals here (Contribute is handled by Chores tab)
+  const TASK_SECTIONS = SECTIONS.filter(s => s.id !== "contribute");
+  const sec = TASK_SECTIONS.find(s => s.id===activeSection) || TASK_SECTIONS[0];
+  const currentTasks = tasks[activeMember.id]?.[sec.id] || [];
 
   function addTask() {
     if (!newTask.trim()) return;
-    setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [activeSection]: [...(prev[activeMember.id]?.[activeSection]||[]), { id:Date.now(), label:newTask.trim(), done:false }] } }));
+    setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: [...(prev[activeMember.id]?.[sec.id]||[]), { id:Date.now(), label:newTask.trim(), done:false }] } }));
     setNewTask("");
   }
 
   return (
     <div>
-      <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>Task Setup</h2>
-      <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>Configure daily tasks per person. These populate automatically on the Today page.</p>
-      <div style={{ background:"#EFF6FF", border:"2px solid #BFDBFE", borderRadius:14, padding:"12px 16px", marginBottom:18 }}>
-        <div style={{ fontSize:13, color:"#1E40AF", fontFamily:"'Nunito',sans-serif", fontWeight:600 }}>📋 Bulk upload coming soon — paste a cleaning chart or upload curriculum CSV to auto-populate.</div>
-      </div>
+      <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>⚡ Task Setup</h2>
+      <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>
+        Add Learn, Exercise, and Goals tasks per person. For chores, use the 🧹 Chores tab.
+      </p>
       <div style={{ display:"flex", gap:8, marginBottom:16, overflowX:"auto" }}>
-        {family.map(m => <button key={m.id} onClick={() => setActiveMember(m)} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", borderRadius:99, flexShrink:0, cursor:"pointer", background: activeMember.id===m.id?m.color:T.stone, border: activeMember.id===m.id?`2px solid ${m.color}`:"2px solid transparent" }}><span style={{fontSize:15}}>{m.emoji}</span><span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, color: activeMember.id===m.id?"#fff":T.sub }}>{m.name}</span></button>)}
+        {family.map(m => (
+          <button key={m.id} onClick={() => setActiveMember(m)} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", borderRadius:99, flexShrink:0, cursor:"pointer", background: activeMember.id===m.id?m.color:T.stone, border: activeMember.id===m.id?`2px solid ${m.color}`:"2px solid transparent" }}>
+            <span style={{fontSize:15}}>{m.emoji}</span>
+            <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, color: activeMember.id===m.id?"#fff":T.sub }}>{m.name}</span>
+          </button>
+        ))}
       </div>
       <div style={{ display:"flex", gap:6, marginBottom:16 }}>
-        {SECTIONS.map(s => <button key={s.id} onClick={() => setActiveSection(s.id)} style={{ flex:1, padding:"10px 8px", borderRadius:12, border:"none", cursor:"pointer", background: activeSection===s.id?s.color:T.stone, color: activeSection===s.id?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>{s.icon} {s.label}</button>)}
+        {TASK_SECTIONS.map(s => (
+          <button key={s.id} onClick={() => setActiveSection(s.id)} style={{ flex:1, padding:"10px 8px", borderRadius:12, border:"none", cursor:"pointer", background: sec.id===s.id?s.color:T.stone, color: sec.id===s.id?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>
+            {s.icon} {s.label}
+          </button>
+        ))}
       </div>
       <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px", marginBottom:14 }}>
         <div style={{ fontSize:16, fontWeight:700, color:T.text, marginBottom:12 }}>{activeMember.name}'s {sec.label} Tasks</div>
-        {currentTasks.length===0 ? <div style={{ textAlign:"center", padding:"16px 0", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No tasks yet</div> : currentTasks.map(task => (
-          <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:6 }}>
-            <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{task.label}</span>
-            <button onClick={() => setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [activeSection]: prev[activeMember.id][activeSection].filter(t=>t.id!==task.id) } }))} style={{ padding:"5px 10px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>✕</button>
-          </div>
-        ))}
+        {currentTasks.length===0
+          ? <div style={{ textAlign:"center", padding:"16px 0", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No tasks yet — add one below</div>
+          : currentTasks.map(task => (
+            <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:6 }}>
+              <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{task.label}</span>
+              <button onClick={() => setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: prev[activeMember.id][sec.id].filter(t=>t.id!==task.id) } }))} style={{ padding:"5px 10px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>✕</button>
+            </div>
+          ))
+        }
       </div>
       <div style={{ display:"flex", gap:10 }}>
         <input value={newTask} onChange={e=>setNewTask(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addTask()} placeholder={`Add a ${sec.label.toLowerCase()} task for ${activeMember.name}…`} style={{ flex:1, padding:"12px 16px", borderRadius:12, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14 }} />
@@ -919,6 +1221,7 @@ export default function App() {
   const [page, setPage]   = useState("today");
   const [family]          = useState(FAMILY_INIT);
   const [events, setEvents] = useState(INIT_CAL_EVENTS);
+  const [choreAssignments, setChoreAssignments] = useState(INIT_CHORE_ASSIGNMENTS);
   const [tasks,  setTasks]  = useState(INIT_TASKS);
   const [goals,  setGoals]  = useState(INIT_GOALS);
   const [streaks]           = useState(INIT_STREAKS);
@@ -965,7 +1268,7 @@ export default function App() {
     return () => window.removeEventListener("hashchange", check);
   }, []);
 
-  if (adminMode) return <AdminPage family={family} events={events} setEvents={setEvents} tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals} />;
+  if (adminMode) return <AdminPage family={family} events={events} setEvents={setEvents} tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} />;
 
   const goAdmin = () => { window.location.hash = "#admin"; };
 
@@ -973,7 +1276,7 @@ export default function App() {
     <div style={{ background:T.bg, width:"100vw", minHeight:"100vh", overflowX:"hidden" }}>
       <TopBar onAdmin={goAdmin} />
       {page==="calendar" && <CalendarPage family={family} events={events} />}
-      {page==="today"    && <TodayPage    family={family} tasks={tasks} />}
+      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} />}
       {page==="progress" && <ProgressPage family={family} goals={goals} streaks={streaks} weekPts={weekPts} />}
       <BottomNav page={page} onPage={setPage} />
     </div>
