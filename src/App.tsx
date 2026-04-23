@@ -139,7 +139,7 @@ function TopBar({ onAdmin }) {
   return (
     <div style={{
       position:"fixed", top:0, left:0, right:0, width:"100vw", zIndex:300,
-      height:50, background:T.white, borderBottom:`2px solid ${T.border}`,
+      height:50, background:T.white, borderBottom:`2px solid ${T.border}`, boxSizing:"border-box",
       display:"flex", alignItems:"center", justifyContent:"space-between",
       padding:"0 16px",
     }}>
@@ -167,7 +167,7 @@ function BottomNav({ page, onPage }) {
     { id:"progress", label:"Progress", icon:"🌈" },
   ];
   return (
-    <nav style={{ position:"fixed", bottom:0, left:0, right:0, width:"100vw", zIndex:200, background:T.white, borderTop:`2px solid ${T.border}`, display:"flex", height:T.navH }}>
+    <nav style={{ position:"fixed", bottom:0, left:0, right:0, width:"100vw", zIndex:200, background:T.white, borderTop:`2px solid ${T.border}`, display:"flex", height:T.navH, boxSizing:"border-box" }}>
       {tabs.map(tab => {
         const active = page===tab.id;
         return (
@@ -217,8 +217,8 @@ function CalendarPage({ family, events }) {
   const visibleEvents = events.filter(ev => ev.memberIds.some(id => visibleIds.has(id)));
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", position:"fixed", left:0, right:0, top:50 }}>
-      <div style={{ background:T.white, borderBottom:`2px solid ${T.border}`, padding:"12px 16px 0", flexShrink:0 }}>
+    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
+      <div style={{ background:T.white, borderBottom:`2px solid ${T.border}`, padding:"12px 16px 0", flexShrink:0, width:"100%" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
           <h1 style={{ fontSize:24, fontWeight:700, color:T.text, margin:0 }}>{MONTHS[weekDates[0].getMonth()]} {weekDates[0].getFullYear()}</h1>
           <div style={{ display:"flex", gap:8 }}>
@@ -374,7 +374,7 @@ function TodayPage({ family }) {
   const allKidsRainbow = family.filter(m => m.defaultOn).every(m => allSectionsDone(taskState[m.id]||{}));
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", position:"fixed", left:0, right:0, top:50 }}>
+    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
       <div style={{ borderBottom:`2px solid ${T.border}`, padding:"10px 14px", flexShrink:0, background: allKidsRainbow?"none":T.white, backgroundImage: allKidsRainbow?RAINBOW_GRAD:"none", transition:"all 0.8s ease" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
           <div>
@@ -613,7 +613,7 @@ function ProgressPage({ family, goals, streaks, weekPts }) {
   const badges  = BADGES[activeMember.id]   || [];
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", position:"fixed", left:0, right:0, top:50 }}>
+    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
       {/* Member selector */}
       <div style={{ background:T.white, borderBottom:`2px solid ${T.border}`, display:"flex", overflowX:"auto", padding:"10px 12px", gap:8, flexShrink:0 }}>
         {family.map(m => {
@@ -979,7 +979,7 @@ export default function App() {
   const goAdmin = () => { window.location.hash = "#admin"; };
 
   return (
-    <div style={{ background:T.bg, minHeight:"100vh", width:"100vw", maxWidth:"100vw", overflowX:"hidden", position:"relative", left:0, right:0 }}>
+    <div style={{ background:T.bg, position:"fixed", top:0, left:0, right:0, bottom:0, width:"100vw", height:"100vh", overflowY:"auto" }}>
       <TopBar onAdmin={goAdmin} />
       {page==="calendar" && <CalendarPage family={family} events={events} />}
       {page==="today"    && <TodayPage    family={family} tasks={tasks} />}
