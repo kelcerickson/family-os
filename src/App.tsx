@@ -121,7 +121,7 @@ function dbChoresToApp(rows) {
 }
 
 const FONT_URL =
-  "https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap";
+  "https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&family=Playfair+Display:wght@700&display=swap";
 
 const T = {
   bg: "#F7F5F0",
@@ -331,6 +331,112 @@ function stripeStyle(colors) {
   return { background: `repeating-linear-gradient(45deg, ${stops})` };
 }
 
+
+// ── Screensaver ───────────────────────────────────────────────────────────────
+// Replace this URL with your family photo. Upload to any public image host
+// (Google Photos shared link, Dropbox, Imgur, etc.) and paste the direct image URL here.
+const FAMILY_PHOTO_URL = ""; // <-- paste your photo URL here
+const SCREENSAVER_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+function Screensaver({ onDismiss }) {
+  const [time, setTime] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => setTime(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const timeStr = time.toLocaleTimeString("en-US", {
+    hour: "numeric", minute: "2-digit", timeZone: "America/Denver"
+  });
+  const dateStr = time.toLocaleDateString("en-US", {
+    weekday: "long", month: "long", day: "numeric", timeZone: "America/Denver"
+  });
+
+  return (
+    <div
+      onClick={onDismiss}
+      onTouchStart={onDismiss}
+      style={{
+        position: "fixed", inset: 0, zIndex: 9999,
+        background: "#000",
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        cursor: "pointer",
+        userSelect: "none",
+      }}
+    >
+      {/* Family photo */}
+      {FAMILY_PHOTO_URL ? (
+        <div style={{
+          position: "absolute", inset: 0,
+          backgroundImage: `url(${FAMILY_PHOTO_URL})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          filter: "brightness(0.6)",
+        }} />
+      ) : (
+        <div style={{
+          position: "absolute", inset: 0,
+          background: "linear-gradient(135deg, #1A2F4B 0%, #0F1E30 50%, #1A2F4B 100%)",
+        }}>
+          {/* Star field */}
+          {Array.from({length: 40}).map((_, i) => (
+            <div key={i} style={{
+              position: "absolute",
+              top: `${Math.sin(i * 37.5) * 50 + 50}%`,
+              left: `${Math.sin(i * 23.7) * 50 + 50}%`,
+              width: i % 5 === 0 ? 3 : 1.5,
+              height: i % 5 === 0 ? 3 : 1.5,
+              background: "#fff",
+              borderRadius: "50%",
+              opacity: 0.3 + (i % 4) * 0.15,
+            }} />
+          ))}
+        </div>
+      )}
+
+      {/* Content overlay */}
+      <div style={{ position: "relative", zIndex: 1, textAlign: "center" }}>
+        {/* Family name */}
+        <div style={{
+          fontFamily: "'Fredoka',sans-serif", fontSize: 28, fontWeight: 600,
+          color: "rgba(255,255,255,0.7)", letterSpacing: 4, textTransform: "uppercase",
+          marginBottom: 16,
+        }}>
+          🏡 The Erickson Family
+        </div>
+
+        {/* Clock */}
+        <div style={{
+          fontFamily: "'Playfair Display',serif", fontSize: 96, fontWeight: 700,
+          color: "#fff", lineHeight: 1, letterSpacing: -2,
+          textShadow: "0 4px 30px rgba(0,0,0,0.5)",
+        }}>
+          {timeStr}
+        </div>
+
+        {/* Date */}
+        <div style={{
+          fontFamily: "'Fredoka',sans-serif", fontSize: 24, fontWeight: 500,
+          color: "rgba(255,255,255,0.75)", marginTop: 12, letterSpacing: 1,
+        }}>
+          {dateStr}
+        </div>
+
+        {/* Tap to wake */}
+        <div style={{
+          marginTop: 48,
+          fontFamily: "'Nunito',sans-serif", fontSize: 14,
+          color: "rgba(255,255,255,0.35)", letterSpacing: 1,
+        }}>
+          Tap anywhere to continue
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Top Bar ───────────────────────────────────────────────────────────────────
 function TopBar({ onAdmin }) {
   return (
@@ -344,14 +450,28 @@ function TopBar({ onAdmin }) {
         <span style={{ fontSize:22 }}>🏡</span>
         <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color:T.text }}>Family OS</span>
       </div>
-      <button onClick={onAdmin} style={{
-        display:"flex", alignItems:"center", gap:6,
-        background:T.stone, border:`2px solid ${T.border}`,
-        borderRadius:99, padding:"6px 14px", cursor:"pointer",
-        fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600, color:T.sub,
-      }}>
-        <span style={{ fontSize:15 }}>⚙️</span> Admin
-      </button>
+      <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+        <button onClick={() => window.location.reload()} style={{
+          display:"flex", alignItems:"center", gap:6,
+          background:T.stone, border:`2px solid ${T.border}`,
+          borderRadius:99, padding:"6px 14px", cursor:"pointer",
+          fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600, color:T.sub,
+          transition:"all 0.15s",
+        }}
+        onMouseEnter={e => { e.currentTarget.style.background="#2D7A56"; e.currentTarget.style.color="#fff"; e.currentTarget.style.borderColor="#2D7A56"; }}
+        onMouseLeave={e => { e.currentTarget.style.background=T.stone; e.currentTarget.style.color=T.sub; e.currentTarget.style.borderColor=T.border; }}
+        title="Refresh page">
+          <span style={{ fontSize:15 }}>🔄</span> Refresh
+        </button>
+        <button onClick={onAdmin} style={{
+          display:"flex", alignItems:"center", gap:6,
+          background:T.stone, border:`2px solid ${T.border}`,
+          borderRadius:99, padding:"6px 14px", cursor:"pointer",
+          fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600, color:T.sub,
+        }}>
+          <span style={{ fontSize:15 }}>⚙️</span> Admin
+        </button>
+      </div>
     </div>
   );
 }
@@ -1675,6 +1795,8 @@ function AppInner() {
   const [family]          = useState(FAMILY_INIT);
   const [adminMode, setAdminMode] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [screensaver, setScreensaver] = useState(false);
+  const inactivityTimer = useState(null);
 
   // Supabase-backed state
   const [events,           setEvents]           = useState([]);
@@ -1741,18 +1863,43 @@ function AppInner() {
     document.head.appendChild(overrideStyle);
 
     loadAll();
+
+    // Screensaver inactivity timer
+    let timer = null;
+    function resetTimer() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setScreensaver(true), SCREENSAVER_TIMEOUT_MS);
+    }
+    function onActivity() {
+      setScreensaver(false);
+      resetTimer();
+    }
+    const events = ["mousedown","mousemove","keypress","touchstart","click","scroll"];
+    events.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
+    resetTimer();
+
     const check = () => setAdminMode(window.location.hash === "#admin");
     check();
     window.addEventListener("hashchange", check);
-    return () => window.removeEventListener("hashchange", check);
+    return () => {
+      window.removeEventListener("hashchange", check);
+      events.forEach(e => window.removeEventListener(e, onActivity));
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
+  // Screensaver overlay — renders on top of everything
+  const screensaverEl = screensaver ? <Screensaver onDismiss={() => setScreensaver(false)} /> : null;
+
   if (loading) return (
-    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100vh", background:T.bg, fontFamily:"'Fredoka',sans-serif", gap:16 }}>
-      <div style={{ fontSize:48 }}>🏡</div>
-      <div style={{ fontSize:20, fontWeight:700, color:T.text }}>Loading Family OS…</div>
-      <div style={{ fontSize:14, color:T.muted }}>Connecting to database</div>
-    </div>
+    <>
+      {screensaverEl}
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100vh", background:T.bg, fontFamily:"'Fredoka',sans-serif", gap:16 }}>
+        <div style={{ fontSize:48 }}>🏡</div>
+        <div style={{ fontSize:20, fontWeight:700, color:T.text }}>Loading Family OS…</div>
+        <div style={{ fontSize:14, color:T.muted }}>Connecting to database</div>
+      </div>
+    </>
   );
 
   if (adminMode) return <AdminPage family={family} events={events} setEvents={setEvents} tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} dbTaskRows={dbTaskRows} dbGoalRows={dbGoalRows} onReload={loadAll} />;
