@@ -504,12 +504,21 @@ function BottomNav({ page, onPage }) {
 // ════════════════════════════════════════════════════════════════════════════
 // PAGE 1 — CALENDAR
 // ════════════════════════════════════════════════════════════════════════════
-const CAL_HOURS = Array.from({ length:15 }, (_, i) => i + 6);
+const CAL_HOURS = Array.from({ length:20 }, (_, i) => i + 5); // 5am to 12am
 const CELL_H = 52;
 
 const INIT_CAL_EVENTS = [];
 
 function CalendarPage({ family, events }) {
+  const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
+  const [weekAnchor, setWeekAnchor] = useState(TODAY_DATE);
+  const [visibleIds, setVisibleIds] = useState(new Set(family.map(m => m.id)));
+  const weekDates = getWeekDates(weekAnchor);
+  const todayStr = TODAY_DATE.toDateString();
+  const calScrollRef = useState(null);
+  useEffect(() => {
+    if (calScrollRef[0]) calScrollRef[0].scrollTop = 2 * 48;
+  }, [calScrollRef[0]]);
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
   const [weekAnchor, setWeekAnchor] = useState(TODAY_DATE);
   const [visibleIds, setVisibleIds] = useState(new Set(family.map(m => m.id)));
@@ -581,7 +590,7 @@ function CalendarPage({ family, events }) {
             </div>
           ))}
         </div>
-        <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", width:"100%", alignItems:"stretch" }}>
+        <div ref={el => calScrollRef[0] = el} style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"auto", WebkitOverflowScrolling:"touch", width:"100%", alignItems:"stretch" }}>
           {weekDates.map((date, dowIdx) => {
             const isToday = date.toDateString()===todayStr;
             const dayEvs = visibleEvents.filter(ev => eventMatchesDate(ev, date));
