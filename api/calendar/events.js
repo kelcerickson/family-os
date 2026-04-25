@@ -3,11 +3,11 @@ export default async function handler(req, res) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
+  // Only fetch from these calendars (add more names here if needed)
+  const ALLOWED_CALENDARS = ["TruRating Calendar"];
+
   if (!supabaseUrl || !supabaseKey) {
     return res.status(500).json({ error: 'Missing SUPABASE_URL or SUPABASE_SERVICE_KEY' });
-  }
-  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-    return res.status(500).json({ error: 'Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET' });
   }
 
   try {
@@ -57,20 +57,39 @@ export default async function handler(req, res) {
     const now = new Date().toISOString();
     const future = new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Get all calendars
+    // Get all calendars then filter to allowed ones only
     const calListRes = await fetch(
       'https://www.googleapis.com/calendar/v3/users/me/calendarList',
       { headers: authHeaders }
     );
     const calList = await calListRes.json();
-    const calendars = calList.items || [];
+    const allCalendars = calList.items || [];
+
+    // Only keep the TruRating Calendar
+    const filteredCalendars = allCalendars.filter(cal =>
+      ALLOWED_CALENDARS.includes(cal.summary)
+    );
+
+    console.log('All calendars:', allCalendars.map(c => c.summary));
+    console.log('Fetching from:', filteredCalendars.map(c => c.summary));
+
+    if (filteredCalendars.length === 0) {
+      return res.status(200).json({
+        events: [],
+        message: 'No matching calendars found',
+        allCalendarsFound: allCalendars.map(c => c.summary)
+      });
+    }
 
     const allEvents = [];
-    for (const cal of calendars) {
+    for (const cal of filteredCalendars) {
       try {
         const params = new URLSearchParams({
-          timeMin: now, timeMax: future,
-          singleEvents: 'true', orderBy: 'startTime', maxResults: '100',
+          timeMin: now,
+          timeMax: future,
+          singleEvents: 'true',
+          orderBy: 'startTime',
+          maxResults: '500',
         });
         const evRes = await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?${params}`,
@@ -107,10 +126,14 @@ export default async function handler(req, res) {
         };
       });
 
-    res.status(200).json({ events, calendarsFound: calendars.map(c => c.summary) });
+    res.status(200).json({
+      events,
+      calendarsFound: filteredCalendars.map(c => c.summary),
+      totalEvents: events.length,
+    });
 
   } catch (err) {
-    console.error('events.js crash:', err.message, err.stack);
+    console.error('events.js crash:', err.message);
     res.status(500).json({ error: err.message });
   }
 }
