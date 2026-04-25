@@ -575,44 +575,54 @@ function CalendarPage({ family, events }) {
         cursor:"pointer", boxShadow:"-2px 0 12px rgba(0,0,0,0.08)",
         fontSize:22, color:T.sub, fontWeight:700,
       }}>›</button>
-      <div style={{ flex:1, display:"flex", overflow:"hidden" }}>
-        <div style={{ width:46, flexShrink:0, borderRight:`1px solid ${T.border}`, overflowY:"hidden" }}>
-          <div style={{ height:44, borderBottom:`1px solid ${T.border}`, background:T.bg }} />
-          {CAL_HOURS.map(h => (
-            <div key={h} style={{ height:CELL_H, display:"flex", alignItems:"flex-start", justifyContent:"flex-end", paddingRight:7, paddingTop:5 }}>
-              <span style={{ fontSize:10, color:T.muted, fontWeight:600 }}>{h>12?`${h-12}p`:h===12?"12p":`${h}a`}</span>
-            </div>
-          ))}
-        </div>
-        <div ref={el => calScrollRef[0] = el} style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"auto", WebkitOverflowScrolling:"touch", width:"100%", alignItems:"stretch" }}>
-          {weekDates.map((date, dowIdx) => {
-            const isToday = date.toDateString()===todayStr;
-            const dayEvs = visibleEvents.filter(ev => eventMatchesDate(ev, date));
-            return (
-              <div key={dowIdx} style={{ minWidth:0, flex:"1 1 0%", borderRight: dowIdx<6?`1px solid ${T.border}`:"none", position:"relative" }}>
-                <div style={{ height:44, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, zIndex:9, background: isToday?T.text:T.bg, borderRadius: isToday?"0 0 12px 12px":0 }}>
-                  <span style={{ fontSize:10, fontWeight:700, letterSpacing:0.5, textTransform:"uppercase", color: isToday?"rgba(255,255,255,0.6)":T.muted }}>{DAYS_SHORT[date.getDay()]}</span>
-                  <span style={{ fontSize:16, fontWeight:700, color: isToday?T.white:T.text }}>{date.getDate()}</span>
-                </div>
-                <div style={{ position:"relative", height:CAL_HOURS.length*CELL_H }}>
-                  {CAL_HOURS.map((_,i) => <div key={i} style={{ position:"absolute", top:i*CELL_H, left:0, right:0, borderTop:`1px solid ${T.border}`, height:CELL_H }} />)}
-                  {dayEvs.map(ev => {
-                    const mColors = ev.memberIds.map(id => memberMap[id]?.color).filter(Boolean);
-                    const isMulti = mColors.length > 1;
-                    const sStyle = isMulti ? stripeStyle(mColors) : { background: mColors[0]+"DD" };
-                    return (
-                      <div key={ev.id} style={{ position:"absolute", top:(ev.startH-CAL_HOURS[0])*CELL_H+3, left:4, right:4, height:ev.dur*CELL_H-6, borderRadius:14, ...sStyle, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", zIndex:2, boxShadow:"0 2px 8px rgba(0,0,0,0.12)" }}>
-                        <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:"rgba(255,255,255,0.22)", padding:"4px 6px" }}>
-                          <div style={{ fontSize:11, fontWeight:700, color:"#fff", textAlign:"center", lineHeight:1.3, textShadow:"0 1px 3px rgba(0,0,0,0.4)" }}>{ev.title}</div>
-                          {ev.dur >= 0.75 && <div style={{ fontSize:10, color:"rgba(255,255,255,0.85)", marginTop:2 }}>{ev.memberIds.map(id=>memberMap[id]?.emoji).join("")}</div>}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+      {/* Single scroll container with sticky time labels */}
+      <div ref={el => { if(el && calScrollRef[0]!==el) { calScrollRef[0]=el; el.scrollTop=(8-CAL_HOURS[0])*CELL_H; }}} style={{ flex:1, overflowY:"auto", overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
+        <div style={{ display:"flex", minWidth:0 }}>
+          {/* Time labels column - scrolls with content */}
+          <div style={{ width:46, flexShrink:0, borderRight:`1px solid ${T.border}` }}>
+            <div style={{ height:44, borderBottom:`1px solid ${T.border}`, background:T.bg, position:"sticky", top:0, zIndex:10 }} />
+            {CAL_HOURS.map(h => (
+              <div key={h} style={{ height:CELL_H, display:"flex", alignItems:"flex-start", justifyContent:"flex-end", paddingRight:7, paddingTop:5 }}>
+                <span style={{ fontSize:10, color:T.muted, fontWeight:600 }}>{h===0?"12a":h>12?`${h-12}p`:h===12?"12p":`${h}a`}</span>
               </div>
-            );
-          })}
+            ))}
+          </div>
+
+          {/* Day columns */}
+          <div style={{ flex:1, display:"flex", minWidth:0 }}>
+            {weekDates.map((date, dowIdx) => {
+              const isToday = date.toDateString()===todayStr;
+              const dayEvs = visibleEvents.filter(ev => eventMatchesDate(ev, date));
+              return (
+                <div key={dowIdx} style={{ flex:"1 1 0%", minWidth:0, borderRight: dowIdx<6?`1px solid ${T.border}`:"none", position:"relative" }}>
+                  {/* Sticky day header */}
+                  <div style={{ height:44, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, zIndex:9, background: isToday?T.text:T.bg, borderRadius: isToday?"0 0 12px 12px":0 }}>
+                    <span style={{ fontSize:10, fontWeight:700, letterSpacing:0.5, textTransform:"uppercase", color: isToday?"rgba(255,255,255,0.6)":T.muted }}>{DAYS_SHORT[date.getDay()]}</span>
+                    <span style={{ fontSize:16, fontWeight:700, color: isToday?T.white:T.text }}>{date.getDate()}</span>
+                  </div>
+                  {/* Hour grid */}
+                  <div style={{ position:"relative", height:CAL_HOURS.length*CELL_H }}>
+                    {CAL_HOURS.map((_,i) => <div key={i} style={{ position:"absolute", top:i*CELL_H, left:0, right:0, borderTop:`1px solid ${T.border}`, height:CELL_H }} />)}
+                    {dayEvs.map(ev => {
+                      const mColors = ev.memberIds.map(id => memberMap[id]?.color).filter(Boolean);
+                      const isMulti = mColors.length > 1;
+                      const sStyle = isMulti ? stripeStyle(mColors) : { background: mColors[0]+"DD" };
+                      const evTop = (ev.startH - CAL_HOURS[0]) * CELL_H + 2;
+                      const evH = Math.max(ev.dur * CELL_H - 4, 18);
+                      return (
+                        <div key={ev.id} style={{ position:"absolute", top:evTop, left:3, right:3, height:evH, borderRadius:6, ...sStyle, overflow:"hidden", zIndex:2, boxShadow:"0 1px 4px rgba(0,0,0,0.15)" }}>
+                          <div style={{ padding:"2px 5px", height:"100%", display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                            <div style={{ fontSize:10, fontWeight:700, color:"#fff", lineHeight:1.2, textShadow:"0 1px 2px rgba(0,0,0,0.4)", overflow:"hidden", display:"-webkit-box", WebkitLineClamp:evH>30?3:1, WebkitBoxOrient:"vertical" }}>{ev.title}</div>
+                            {evH > 28 && <div style={{ fontSize:9, color:"rgba(255,255,255,0.85)", marginTop:1 }}>{ev.startH%1===0?`${ev.startH>12?ev.startH-12:ev.startH}:00${ev.startH>=12?"pm":"am"}`:`${Math.floor(ev.startH)>12?Math.floor(ev.startH)-12:Math.floor(ev.startH)}:30${Math.floor(ev.startH)>=12?"pm":"am"}`}</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
