@@ -524,8 +524,9 @@ function CalendarPage({ family, events }) {
     if (ev.recurrence === "weekly") return matchesDow;
     if (ev.recurrence === "monthly") return matchesDow && date.getDate() <= 7;
     if (ev.recurrence === "once" && ev.specificDate) {
-      const evDate = new Date(ev.specificDate + "T00:00:00");
-      return evDate.toDateString() === date.toDateString();
+      // Compare date strings directly to avoid timezone issues
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+      return ev.specificDate === dateStr;
     }
     // Legacy events default to weekly by dow
     return matchesDow;
@@ -1887,10 +1888,17 @@ function AppInner() {
           const res = await fetch(`/api/calendar/events?memberId=${member.id}`);
           if (res.ok) {
             const data = await res.json();
+            console.log(`📅 ${member.id} calendar: ${data.events?.length || 0} events, calendars:`, data.calendarsFound);
             if (data.events) gcalEvents.push(...data.events);
+          } else {
+            const err = await res.json().catch(() => ({}));
+            if (res.status !== 404) console.warn(`⚠️ ${member.id} calendar error:`, err);
           }
-        } catch {} // member not connected, skip silently
+        } catch(e) {
+          console.warn(`⚠️ ${member.id} fetch failed:`, e.message);
+        }
       }
+      console.log(`📅 Total Google Calendar events loaded: ${gcalEvents.length}`);
 
       // Merge manual + Google Calendar events
       setEvents([...manualEvents, ...gcalEvents]);
@@ -1955,7 +1963,14 @@ function AppInner() {
     events.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
     resetTimer();
 
-    const check = () => setAdminMode(window.location.hash === "#admin");
+    const check = () => {
+      const hash = window.location.hash;
+      setAdminMode(hash.startsWith("#admin"));
+      // If returning from Google OAuth, reload all data
+      if (hash.includes("calendar_connected=true")) {
+        loadAll();
+      }
+    };
     check();
     window.addEventListener("hashchange", check);
     return () => {
