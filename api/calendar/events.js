@@ -4,7 +4,8 @@ export default async function handler(req, res) {
   const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
   // Only fetch from these calendars (add more names here if needed)
-  const ALLOWED_CALENDARS = ["TruRating Calendar"];
+  // Try both the display name and the fallback name Google assigns to shared Outlook calendars
+  const ALLOWED_CALENDARS = ["TruRating Calendar", "Calendar"];
 
   if (!supabaseUrl || !supabaseKey) {
     return res.status(500).json({ error: 'Missing SUPABASE_URL or SUPABASE_SERVICE_KEY' });
