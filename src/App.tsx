@@ -1886,16 +1886,20 @@ function AppInner() {
       for (const member of FAMILY_INIT) {
         try {
           const res = await fetch(`/api/calendar/events?memberId=${member.id}`);
-          if (res.ok) {
-            const data = await res.json();
-            console.log(`📅 ${member.id} calendar: ${data.events?.length || 0} events, calendars:`, data.calendarsFound);
-            if (data.events) gcalEvents.push(...data.events);
-          } else {
-            const err = await res.json().catch(() => ({}));
-            if (res.status !== 404) console.warn(`⚠️ ${member.id} calendar error:`, err);
+          if (res.status === 200) {
+            const text = await res.text();
+            try {
+              const data = JSON.parse(text);
+              console.log(`📅 ${member.id}: ${data.events?.length || 0} events from`, data.calendarsFound?.join(', '));
+              if (data.events && data.events.length > 0) gcalEvents.push(...data.events);
+            } catch(parseErr) {
+              console.warn(`⚠️ ${member.id} JSON parse failed:`, text.slice(0,100));
+            }
+          } else if (res.status !== 404) {
+            console.warn(`⚠️ ${member.id} returned ${res.status}`);
           }
         } catch(e) {
-          console.warn(`⚠️ ${member.id} fetch failed:`, e.message);
+          console.warn(`⚠️ ${member.id} fetch error:`, e.message);
         }
       }
       console.log(`📅 Total Google Calendar events loaded: ${gcalEvents.length}`);
