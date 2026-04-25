@@ -613,7 +613,13 @@ function CalendarPage({ family, events }) {
                         <div key={ev.id} style={{ position:"absolute", top:evTop, left:3, right:3, height:evH, borderRadius:6, ...sStyle, overflow:"hidden", zIndex:2, boxShadow:"0 1px 4px rgba(0,0,0,0.15)" }}>
                           <div style={{ padding:"2px 5px", height:"100%", display:"flex", flexDirection:"column", justifyContent:"center" }}>
                             <div style={{ fontSize:10, fontWeight:700, color:"#fff", lineHeight:1.2, textShadow:"0 1px 2px rgba(0,0,0,0.4)", overflow:"hidden", display:"-webkit-box", WebkitLineClamp:evH>30?3:1, WebkitBoxOrient:"vertical" }}>{ev.title}</div>
-                            {evH > 28 && <div style={{ fontSize:9, color:"rgba(255,255,255,0.85)", marginTop:1 }}>{ev.startH%1===0?`${ev.startH>12?ev.startH-12:ev.startH}:00${ev.startH>=12?"pm":"am"}`:`${Math.floor(ev.startH)>12?Math.floor(ev.startH)-12:Math.floor(ev.startH)}:30${Math.floor(ev.startH)>=12?"pm":"am"}`}</div>}
+                            {evH > 28 && <div style={{ fontSize:9, color:"rgba(255,255,255,0.85)", marginTop:1 }}>{(() => {
+                              const h = Math.floor(ev.startH);
+                              const m = Math.round((ev.startH - h) * 60);
+                              const h12 = h % 12 === 0 ? 12 : h % 12;
+                              const ampm = h >= 12 ? "pm" : "am";
+                              return `${h12}:${m.toString().padStart(2,'0')}${ampm}`;
+                            })()}</div>}
                           </div>
                         </div>
                       );
