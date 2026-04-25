@@ -1,13 +1,8 @@
-
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   const { code, state: memberId } = req.query;
-
-  if (!code) {
-    return res.status(400).send("No authorization code received");
-  }
+  if (!code) return res.status(400).send("No authorization code received");
 
   try {
-    // Exchange code for tokens
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -19,21 +14,14 @@ export default async function handler(req, res) {
         grant_type: "authorization_code",
       }),
     });
-
     const tokens = await tokenRes.json();
+    if (tokens.error) return res.status(400).send(`Token error: ${tokens.error_description}`);
 
-    if (tokens.error) {
-      console.error("Token error:", tokens);
-      return res.status(400).send(`Token error: ${tokens.error_description}`);
-    }
-
-    // Get user email
     const userRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
     });
     const user = await userRes.json();
 
-    // Store tokens in Supabase
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
 
@@ -55,11 +43,8 @@ export default async function handler(req, res) {
       }),
     });
 
-    // Redirect back to app with success
-    res.redirect(`https://family-os-snowy.vercel.app/#admin&calendar_connected=true`);
-
+    res.redirect("https://family-os-snowy.vercel.app/#admin&calendar_connected=true");
   } catch (err) {
-    console.error("Callback error:", err);
     res.status(500).send(`Error: ${err.message}`);
   }
-}
+};
