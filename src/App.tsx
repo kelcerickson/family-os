@@ -607,7 +607,7 @@ function CalendarPage({ family, events }) {
                     const isMulti = mColors.length > 1;
                     const sStyle = isMulti ? stripeStyle(mColors) : { background: mColors[0]+"DD" };
                     return (
-                      <div key={ev.id} style={{ position:"absolute", top:(ev.startH-6)*CELL_H+3, left:4, right:4, height:ev.dur*CELL_H-6, borderRadius:14, ...sStyle, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", zIndex:2, boxShadow:"0 2px 8px rgba(0,0,0,0.12)" }}>
+                      <div key={ev.id} style={{ position:"absolute", top:(ev.startH-CAL_HOURS[0])*CELL_H+3, left:4, right:4, height:ev.dur*CELL_H-6, borderRadius:14, ...sStyle, display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", zIndex:2, boxShadow:"0 2px 8px rgba(0,0,0,0.12)" }}>
                         <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", background:"rgba(255,255,255,0.22)", padding:"4px 6px" }}>
                           <div style={{ fontSize:11, fontWeight:700, color:"#fff", textAlign:"center", lineHeight:1.3, textShadow:"0 1px 3px rgba(0,0,0,0.4)" }}>{ev.title}</div>
                           {ev.dur >= 0.75 && <div style={{ fontSize:10, color:"rgba(255,255,255,0.85)", marginTop:2 }}>{ev.memberIds.map(id=>memberMap[id]?.emoji).join("")}</div>}
