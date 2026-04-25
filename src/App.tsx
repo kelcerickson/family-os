@@ -1157,6 +1157,22 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [showForm, setShowForm] = useState(false);
   const [showOAuthGuide, setShowOAuthGuide] = useState(null);
+  const [connectedMembers, setConnectedMembers] = useState([]);
+
+  // Check which members have Google Calendar connected
+  useEffect(() => {
+    async function checkConnections() {
+      const connected = [];
+      for (const m of family) {
+        try {
+          const res = await fetch(`/api/calendar/events?memberId=${m.id}`);
+          if (res.ok) connected.push(m.id);
+        } catch {}
+      }
+      setConnectedMembers(connected);
+    }
+    checkConnections();
+  }, []);
   const DOW_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
   async function addEvent() {
@@ -1233,12 +1249,58 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
                   <div style={{ fontSize:11, color:T.muted, fontFamily:"'Nunito',sans-serif" }}>Requires one-time setup</div>
                 </div>
               </div>
-              <button
-                onClick={() => setShowOAuthGuide(showOAuthGuide===cal.id ? null : cal.id)}
-                style={{ width:"100%", padding:"10px", borderRadius:10, background:cal.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, cursor:"pointer" }}
-              >
-                {showOAuthGuide===cal.id ? "▲ Hide Setup Steps" : `▼ How to Connect ${cal.name.split(" ")[0]}`}
-              </button>
+              {cal.id === "google" ? (
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {/* Per-member connect buttons */}
+                  {/* Connected status */}
+                  {connectedMembers.length > 0 && (
+                    <div style={{ background:"#D5EEE2", borderRadius:10, padding:"8px 12px", marginBottom:4 }}>
+                      <div style={{ fontSize:11, fontWeight:700, color:"#2D7A56", fontFamily:"'Nunito',sans-serif", marginBottom:4 }}>
+                        ✅ Google Calendar connected:
+                      </div>
+                      <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                        {connectedMembers.map(id => {
+                          const m = memberMap[id];
+                          return m ? (
+                            <div key={id} style={{ display:"flex", alignItems:"center", gap:4, background:"#fff", borderRadius:99, padding:"4px 10px", fontSize:11, fontWeight:700, color:"#2D7A56", fontFamily:"'Fredoka',sans-serif" }}>
+                              {m.emoji} {m.name}
+                            </div>
+                          ) : null;
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <div style={{ fontSize:12, fontWeight:700, color:T.sub, fontFamily:"'Nunito',sans-serif", marginBottom:2 }}>
+                    {connectedMembers.length > 0 ? "Connect another member:" : "Connect calendar for:"}
+                  </div>
+                  <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+                    {family.map(m => {
+                      const isConnected = connectedMembers.includes(m.id);
+                      return (
+                        <button key={m.id}
+                          onClick={() => window.open(`/api/auth/google/login?memberId=${m.id}`, "_self")}
+                          style={{ display:"flex", alignItems:"center", gap:5, padding:"7px 12px", borderRadius:99, border:`2px solid ${isConnected ? "#2D7A56" : m.color}`, background: isConnected ? "#D5EEE2" : m.light, cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color: isConnected ? "#2D7A56" : m.color }}
+                        >
+                          {isConnected ? "✓" : ""} {m.emoji} {m.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => setShowOAuthGuide(showOAuthGuide===cal.id ? null : cal.id)}
+                    style={{ width:"100%", padding:"8px", borderRadius:10, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, cursor:"pointer" }}
+                  >
+                    {showOAuthGuide===cal.id ? "▲ Hide setup guide" : "▼ Setup instructions"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowOAuthGuide(showOAuthGuide===cal.id ? null : cal.id)}
+                  style={{ width:"100%", padding:"10px", borderRadius:10, background:cal.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, cursor:"pointer" }}
+                >
+                  {showOAuthGuide===cal.id ? "▲ Hide Setup Steps" : `▼ How to Connect ${cal.name.split(" ")[0]}`}
+                </button>
+              )}
               {showOAuthGuide===cal.id && (
                 <div style={{ marginTop:12 }}>
                   {OAUTH_STEPS[cal.id].steps.map(step => (
@@ -1816,7 +1878,22 @@ function AppInner() {
       const choreRows = await SB.getChores().catch(() => []);
       const taskRows = await SB.getTasks().catch(() => []);
       const goalRows = await SB.getGoals().catch(() => []);
-      setEvents(dbEventsToApp(evRows || []));
+      const manualEvents = dbEventsToApp(evRows || []);
+
+      // Fetch Google Calendar events for all connected members
+      const gcalEvents = [];
+      for (const member of FAMILY_INIT) {
+        try {
+          const res = await fetch(`/api/calendar/events?memberId=${member.id}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data.events) gcalEvents.push(...data.events);
+          }
+        } catch {} // member not connected, skip silently
+      }
+
+      // Merge manual + Google Calendar events
+      setEvents([...manualEvents, ...gcalEvents]);
       setChoreAssignments(dbChoresToApp(choreRows || []));
       setDbTaskRows(taskRows || []);
       setTasks(dbTasksToApp(taskRows || []));
