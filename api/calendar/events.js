@@ -106,22 +106,37 @@ export default async function handler(req, res) {
       }
     }
 
+    // Convert to Mountain Time (America/Denver)
+    function toMountain(dateStr) {
+      const date = new Date(dateStr);
+      // Get the time in Mountain timezone
+      const mtStr = date.toLocaleString('en-US', { timeZone: 'America/Denver' });
+      return new Date(mtStr);
+    }
+
+    function getMountainDateStr(dateStr) {
+      const date = new Date(dateStr);
+      const mtStr = date.toLocaleDateString('en-CA', { timeZone: 'America/Denver' }); // YYYY-MM-DD format
+      return mtStr;
+    }
+
     const events = allEvents
       .filter(ev => ev.start?.dateTime)
       .map(ev => {
-        const start = new Date(ev.start.dateTime);
-        const end = new Date(ev.end.dateTime);
-        const startH = start.getHours() + start.getMinutes() / 60;
-        const dur = (end - start) / (1000 * 60 * 60);
+        const startMT = toMountain(ev.start.dateTime);
+        const endMT = toMountain(ev.end.dateTime);
+        const startH = startMT.getHours() + startMT.getMinutes() / 60;
+        const dur = (new Date(ev.end.dateTime) - new Date(ev.start.dateTime)) / (1000 * 60 * 60);
+        const specificDate = getMountainDateStr(ev.start.dateTime);
         return {
           id: ev.id,
           title: ev.summary || 'Busy',
           memberIds: [memberId],
-          startH: Math.round(startH * 2) / 2,
-          dur: Math.max(0.5, Math.round(dur * 2) / 2),
+          startH: Math.round(startH * 4) / 4, // round to nearest 15min
+          dur: Math.max(0.25, Math.round(dur * 4) / 4),
           recurrence: 'once',
-          dows: [start.getDay()],
-          specificDate: start.toISOString().slice(0, 10),
+          dows: [startMT.getDay()],
+          specificDate,
           source: 'google',
           calendarName: ev._calName,
         };
