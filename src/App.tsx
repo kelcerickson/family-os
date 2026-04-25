@@ -584,7 +584,7 @@ function CalendarPage({ family, events }) {
         <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", width:"100%", alignItems:"stretch" }}>
           {weekDates.map((date, dowIdx) => {
             const isToday = date.toDateString()===todayStr;
-            const dayEvs = visibleEvents.filter(ev => ev.dow===dowIdx);
+            const dayEvs = visibleEvents.filter(ev => eventMatchesDate(ev, date));
             return (
               <div key={dowIdx} style={{ minWidth:0, flex:"1 1 0%", borderRight: dowIdx<6?`1px solid ${T.border}`:"none", position:"relative" }}>
                 <div style={{ height:44, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, zIndex:9, background: isToday?T.text:T.bg, borderRadius: isToday?"0 0 12px 12px":0 }}>
