@@ -519,12 +519,6 @@ function CalendarPage({ family, events }) {
   useEffect(() => {
     if (calScrollRef[0]) calScrollRef[0].scrollTop = 2 * 48;
   }, [calScrollRef[0]]);
-  const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
-  const [weekAnchor, setWeekAnchor] = useState(TODAY_DATE);
-  const [visibleIds, setVisibleIds] = useState(new Set(family.map(m => m.id)));
-  const weekDates = getWeekDates(weekAnchor);
-  const todayStr = TODAY_DATE.toDateString();
-  // Filter events based on recurrence rules for each week date
   function eventMatchesDate(ev, date) {
     const dow = date.getDay();
     // Support both old single dow and new dows array
