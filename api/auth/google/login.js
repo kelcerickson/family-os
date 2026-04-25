@@ -1,4 +1,4 @@
-export default function handler(req, res) {
+module.exports = function handler(req, res) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const redirectUri = process.env.GOOGLE_REDIRECT_URI;
   const scope = [
@@ -14,10 +14,10 @@ export default function handler(req, res) {
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", scope);
   url.searchParams.set("access_type", "offline");
-  url.searchParams.set("prompt", "consent select_account"); // force re-consent to get all scopes
+  url.searchParams.set("prompt", "consent select_account");
 
   const memberId = req.query.memberId || "dad";
   url.searchParams.set("state", memberId);
 
   res.redirect(url.toString());
-}
+};
