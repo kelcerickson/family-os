@@ -5,7 +5,12 @@ export default async function handler(req, res) {
 
   // Only fetch from these calendars (add more names here if needed)
   // Try both the display name and the fallback name Google assigns to shared Outlook calendars
-  const ALLOWED_CALENDARS = ["TruRating Calendar", "Calendar"];
+  // Calendars to show per family member
+  const CALENDARS_BY_MEMBER = {
+    dad: ["TruRating Calendar", "Calendar"],
+    mom: ["Family", "Homeschool", "Personal", "Family Planning"],
+  };
+  const ALLOWED_CALENDARS = CALENDARS_BY_MEMBER[memberId] || [];
 
   if (!supabaseUrl || !supabaseKey) {
     return res.status(500).json({ error: 'Missing SUPABASE_URL or SUPABASE_SERVICE_KEY' });
