@@ -2,7 +2,7 @@
 <html style="margin:0;padding:0;width:100%;overflow-x:hidden;background-color:#F7F5F0;">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <title>Family OS</title>
     <style>
       html, body, #root {
@@ -14,12 +14,24 @@
         min-height: 100vh !important;
         background-color: #F7F5F0 !important;
       }
-      *, *::before, *::after {
+      * {
         box-sizing: border-box !important;
+        -webkit-tap-highlight-color: transparent;
       }
+      /* Enable smooth touch scrolling on all scrollable elements */
+      [style*="overflow-y: auto"],
+      [style*="overflow-y:auto"],
+      [style*="overflowY"] {
+        -webkit-overflow-scrolling: touch !important;
+        touch-action: pan-y !important;
+      }
+      /* Hide scrollbars visually but keep scroll functional */
+      ::-webkit-scrollbar { width: 3px; height: 3px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
     </style>
   </head>
-  <body style="margin:0;padding:0;width:100%;overflow-x:hidden;background-color:#F7F5F0;">
+  <body style="margin:0;padding:0;width:100%;overflow-x:hidden;background-color:#F7F5F0;touch-action:pan-y;">
     <div id="root" style="margin:0;padding:0;width:100%;min-height:100vh;display:block;"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
