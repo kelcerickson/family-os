@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   // Calendars to show per family member
   const CALENDARS_BY_MEMBER = {
     dad: ["TruRating Calendar", "Calendar"],
-    mom: ["Family", "Homeschool", "Personal", "Family Planning"],
+    mom: ["Personal"],
   };
   const ALLOWED_CALENDARS = CALENDARS_BY_MEMBER[memberId] || [];
 
