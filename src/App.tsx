@@ -1231,7 +1231,45 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
         })}
       </div>
 
-      <div className="scroll-col" style={{ flex:1, overflowY:"auto", padding:"16px 16px 28px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
+      <div className="scroll-col" style={{ flex:1, overflowY:"auto", overflowX:"hidden", padding:"16px 16px 80px", WebkitOverflowScrolling:"touch", touchAction:"pan-y" }}>
+
+        {/* ── Badge Showcase — compact emoji strip at top ── */}
+        {(() => {
+           const earned = getEarnedBadges(activeMember.id);
+           return (
+             <div style={{ background:T.white, borderRadius:18, border:`2px solid ${T.border}`, padding:"14px 16px", marginBottom:14 }}>
+               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                   <span style={{ fontSize:18 }}>🏅</span>
+                   <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text }}>
+                     {activeMember.name}'s Badges
+                   </span>
+                 </div>
+                 <div style={{ background:activeMember.color, color:"#fff", borderRadius:99, padding:"2px 10px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700 }}>
+                   {earned.length}/{BADGE_DEFS.length}
+                 </div>
+               </div>
+               {earned.length === 0 ? (
+                 <div style={{ textAlign:"center", padding:"8px 0", fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted }}>
+                   🌱 Complete tasks to earn badges!
+                 </div>
+               ) : (
+                 <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                   {earned.map(b => (
+                     <div key={b.id} title={`${b.label}: ${b.desc}`} style={{ width:44, height:44, borderRadius:12, background:`${activeMember.color}18`, border:`1.5px solid ${activeMember.color}44`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, cursor:"default", boxShadow:"0 1px 4px rgba(0,0,0,0.08)" }}>
+                       {b.emoji}
+                     </div>
+                   ))}
+                   {BADGE_DEFS.filter(b => !earned.some(e=>e.id===b.id)).map(b => (
+                     <div key={b.id} title={`${b.label}: ${b.desc}`} style={{ width:44, height:44, borderRadius:12, background:"rgba(0,0,0,0.04)", border:"1.5px solid rgba(0,0,0,0.08)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, opacity:0.2, cursor:"default", filter:"grayscale(1)" }}>
+                       {b.emoji}
+                     </div>
+                   ))}
+                 </div>
+               )}
+             </div>
+           );
+        })()}
 
         {/* Rainbow Streak + Stats */}
         {(() => {
@@ -1313,49 +1351,54 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
           ))}
         </div>
 
-         {/* ── Badge Showcase — shown first ── */}
+         {/* ── Badge Showcase — compact emoji strip at top ── */}
          {(() => {
            const earned = getEarnedBadges(activeMember.id);
-           const categories = ["rainbow","learn","exercise","contribute","goals"];
-           if (earned.length === 0) return (
-             <div style={{ background:T.white, borderRadius:20, border:`2px solid ${T.border}`, padding:"24px 20px", marginBottom:16, textAlign:"center" }}>
-               <div style={{ fontSize:48, marginBottom:8 }}>🌱</div>
-               <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color:T.text, marginBottom:4 }}>No badges yet!</div>
-               <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted }}>Complete tasks on the Today page to start earning badges</div>
-             </div>
-           );
            return (
-             <div style={{ marginBottom:16 }}>
-               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
-                 <div style={{ fontSize:22 }}>🏅</div>
-                 <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:20, fontWeight:700, color:T.text }}>{activeMember.name}'s Badges</div>
-                 <div style={{ background:activeMember.color, color:"#fff", borderRadius:99, padding:"2px 10px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>{earned.length} earned</div>
+             <div style={{ background:T.white, borderRadius:18, border:`2px solid ${T.border}`, padding:"14px 16px", marginBottom:14 }}>
+               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
+                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                   <span style={{ fontSize:18 }}>🏅</span>
+                   <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text }}>
+                     {activeMember.name}'s Badges
+                   </span>
+                 </div>
+                 <div style={{ background:activeMember.color, color:"#fff", borderRadius:99, padding:"2px 10px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700 }}>
+                   {earned.length}/{BADGE_DEFS.length}
+                 </div>
                </div>
-               {categories.map(cat => {
-                 const catBadges = BADGE_DEFS.filter(b => b.category === cat);
-                 const catEarned = catBadges.filter(b => earned.some(e => e.id === b.id));
-                 const cc = CATEGORY_COLORS[cat];
-                 return (
-                   <div key={cat} style={{ background:cc.bg, border:`2px solid ${cc.border}`, borderRadius:16, padding:"14px 16px", marginBottom:10 }}>
-                     <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:cc.text, marginBottom:10 }}>
-                       {cc.label} · {catEarned.length}/{catBadges.length}
+               {earned.length === 0 ? (
+                 <div style={{ textAlign:"center", padding:"8px 0", fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted }}>
+                   🌱 Complete tasks to earn badges!
+                 </div>
+               ) : (
+                 <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                   {earned.map(b => (
+                     <div key={b.id} title={`${b.label}: ${b.desc}`} style={{
+                       width:44, height:44, borderRadius:12,
+                       background:`${activeMember.color}18`,
+                       border:`1.5px solid ${activeMember.color}44`,
+                       display:"flex", alignItems:"center", justifyContent:"center",
+                       fontSize:22, cursor:"default",
+                       boxShadow:"0 1px 4px rgba(0,0,0,0.08)",
+                     }}>
+                       {b.emoji}
                      </div>
-                     <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                       {catBadges.map(b => {
-                         const isEarned = catEarned.some(e => e.id === b.id);
-                         return (
-                           <div key={b.id} title={b.desc} style={{ display:"flex", flexDirection:"column", alignItems:"center", width:68, opacity:isEarned?1:0.25, filter:isEarned?"none":"grayscale(1)", cursor:"default" }}>
-                             <div style={{ width:50, height:50, borderRadius:14, background:isEarned?"#fff":"rgba(0,0,0,0.04)", border:isEarned?`2px solid ${cc.border.replace("44","BB")}`:"2px solid transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, boxShadow:isEarned?"0 2px 8px rgba(0,0,0,0.1)":"none", marginBottom:4 }}>
-                               {b.emoji}
-                             </div>
-                             <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:9, fontWeight:700, color:cc.text, textAlign:"center", lineHeight:1.2 }}>{b.label}</div>
-                           </div>
-                         );
-                       })}
+                   ))}
+                   {/* Show remaining locked badges as grey */}
+                   {BADGE_DEFS.filter(b => !earned.some(e=>e.id===b.id)).map(b => (
+                     <div key={b.id} title={`${b.label}: ${b.desc}`} style={{
+                       width:44, height:44, borderRadius:12,
+                       background:"rgba(0,0,0,0.04)",
+                       border:"1.5px solid rgba(0,0,0,0.08)",
+                       display:"flex", alignItems:"center", justifyContent:"center",
+                       fontSize:22, opacity:0.2, cursor:"default", filter:"grayscale(1)",
+                     }}>
+                       {b.emoji}
                      </div>
-                   </div>
-                 );
-               })}
+                   ))}
+                 </div>
+               )}
              </div>
            );
          })()}
@@ -1407,7 +1450,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
         </div>
       </div>
 
-      <div style={{ padding:"24px 24px 60px", maxWidth:900, margin:"0 auto" }}>
+      <div style={{ padding:"24px 24px 100px", maxWidth:900, margin:"0 auto", overflowY:"auto", minHeight:"calc(100vh - 140px)", WebkitOverflowScrolling:"touch", touchAction:"pan-y" }}>
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
         {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
@@ -2219,9 +2262,13 @@ function AppInner() {
     if (rootEl) {
       rootEl.style.cssText = 'max-width:100% !important; width:100% !important; margin:0 !important; padding:0 !important;';
     }
-    // Inject a style tag to permanently override #root
+    // Inject global styles for touch scrolling and #root override
     const overrideStyle = document.createElement('style');
-    overrideStyle.textContent = '#root { max-width: 100% !important; width: 100% !important; margin: 0 !important; padding: 0 !important; }';
+    overrideStyle.textContent = `
+      #root { max-width:100% !important; width:100% !important; margin:0 !important; padding:0 !important; }
+      * { -webkit-overflow-scrolling: touch; }
+      .scroll-y { overflow-y: auto !important; -webkit-overflow-scrolling: touch !important; touch-action: pan-y !important; }
+    `;
     document.head.appendChild(overrideStyle);
 
     loadAll();
