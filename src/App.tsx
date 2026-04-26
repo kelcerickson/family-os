@@ -83,6 +83,12 @@ const SB = {
     { member_id: memberId, current_streak: current, longest_streak: longest, last_rainbow_date: lastDate },
     "?on_conflict=member_id"
   ),
+  // Rainbow days log
+  getRainbowDays: () => sb("rainbow_days", "GET", null, "?order=date.desc&limit=60"),
+  logRainbowDay: (memberId, date) => sb("rainbow_days", "POST",
+    { member_id: memberId, date },
+    "?on_conflict=member_id,date"
+  ),
 };
 
 // Convert DB rows to app format
@@ -100,7 +106,8 @@ function dbTasksToApp(rows) {
     if (result[r.member_id][r.section]) result[r.member_id][r.section].push({
       id: r.id, label: r.label, done: false,
       recurrence: r.recurrence || "daily",
-      dows: r.dows || [1,2,3,4,5],
+      // Only set dows for weekly tasks; daily tasks show every day
+      dows: (r.recurrence === "weekly" && r.dows) ? r.dows : null,
       specificDate: r.specific_date || null,
     });
   });
@@ -638,11 +645,21 @@ function CalendarPage({ family, events }) {
 // ════════════════════════════════════════════════════════════════════════════
 // PAGE 2 — TODAY
 // ════════════════════════════════════════════════════════════════════════════
-function PersonColumn({ member, tasks, onToggle, points, completions }) {
+function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowDay, viewDate }) {
   const isRainbow = SECTIONS.every(sec => {
     const items = tasks[sec.id] || [];
     return items.length === 0 || items.every(t => !!(completions && completions[t.label + "|" + member.id]));
   });
+
+  // Fire rainbow day callback when all tasks complete
+  const prevRainbow = useState(false);
+  useEffect(() => {
+    if (isRainbow && !prevRainbow[0] && onRainbowDay && viewDate) {
+      const dateStr = `${viewDate.getFullYear()}-${String(viewDate.getMonth()+1).padStart(2,'0')}-${String(viewDate.getDate()).padStart(2,'0')}`;
+      onRainbowDay(member.id, dateStr);
+    }
+    prevRainbow[1](isRainbow);
+  }, [isRainbow]);
   const allTaskItems = Object.values(tasks).flat();
   const totalItems = allTaskItems.length;
   const doneItems = allTaskItems.filter(t => !!(completions && completions[t.label + "|" + member.id])).length;
@@ -713,7 +730,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions }) {
   );
 }
 
-function TodayPage({ family, tasks: dbTasks, choreAssignments }) {
+function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
   // Task completions loaded from Supabase per day (moved after viewDate)
@@ -812,12 +829,11 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments }) {
             // Use tasks from Supabase, filtered by recurrence for viewDate
             const dbMemberTasks = dbTasks[m.id] || { learn:[], exercise:[], contribute:[], goals:[] };
             function filterByDate(taskList) {
+              const dateStr = `${viewDate.getFullYear()}-${String(viewDate.getMonth()+1).padStart(2,'0')}-${String(viewDate.getDate()).padStart(2,'0')}`;
               return taskList.filter(t => {
                 if (!t.recurrence || t.recurrence === "daily") return true;
-                if (t.recurrence === "weekly") return (t.dows||[1,2,3,4,5]).includes(viewDate.getDay());
-                if (t.recurrence === "once" && t.specificDate) {
-                  return new Date(t.specificDate+"T00:00:00").toDateString() === viewDate.toDateString();
-                }
+                if (t.recurrence === "weekly") return (t.dows||[]).includes(viewDate.getDay());
+                if (t.recurrence === "once" && t.specificDate) return t.specificDate === dateStr;
                 return true;
               });
             }
@@ -831,7 +847,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments }) {
               const items = mergedTasks[s.id] || [];
               return items.length > 0 && items.every(t => !!(completions && completions[t.label + "|" + m.id]));
             }).length;
-            return <PersonColumn key={m.id} member={m} tasks={mergedTasks} onToggle={toggleTask} points={memberPts} completions={completions} />;
+            return <PersonColumn key={m.id} member={m} tasks={mergedTasks} onToggle={toggleTask} points={memberPts} completions={completions} onRainbowDay={onRainbowDay} viewDate={viewDate} />;
           })}
         </div>
       )}
@@ -875,15 +891,109 @@ function ColorRing({ size = 100 }) {
   );
 }
 
-function GoalsQuadrant({ family, goals }) {
+function GoalsQuadrant({ family, goals, setGoals, dbGoalRows }) {
   const [activeMember, setActiveMember] = useState(family[2] || family[0]);
+  const [completedGoals, setCompletedGoals] = useState([]); // { label, quadrant, memberId, date }
+  const [celebration, setCelebration] = useState(null); // { label }
   const memberGoals = goals[activeMember.id] || {};
 
-  // Layout: 4 quadrants with thin dividing lines, Christ circle in center
-  const QUADRANT_SIZE = 160; // px per quadrant cell (rough)
+  // Load completed goals from localStorage per member
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("familyos_completedGoals") || "[]");
+      setCompletedGoals(saved);
+    } catch {}
+  }, []);
+
+  function saveCompleted(list) {
+    setCompletedGoals(list);
+    try { localStorage.setItem("familyos_completedGoals", JSON.stringify(list)); } catch {}
+  }
+
+  async function completeGoal(memberId, quadId, goalLabel) {
+    // Remove from active goals
+    if (setGoals) {
+      setGoals(prev => ({
+        ...prev,
+        [memberId]: {
+          ...prev[memberId],
+          [quadId]: (prev[memberId]?.[quadId] || []).filter(g => g !== goalLabel),
+        },
+      }));
+      // Delete from Supabase
+      if (dbGoalRows) {
+        const row = dbGoalRows.find(r => r.member_id === memberId && r.quadrant === quadId && r.label === goalLabel);
+        if (row) await SB.deleteGoal(row.id);
+      }
+    }
+    // Add to completed list
+    const dateStr = new Date().toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+    const newCompleted = [{ label:goalLabel, quadrant:quadId, memberId, date:dateStr }, ...completedGoals];
+    saveCompleted(newCompleted);
+    // Trigger celebration
+    setCelebration({ label: goalLabel });
+    setTimeout(() => setCelebration(null), 3500);
+  }
+
+  const memberCompleted = completedGoals.filter(g => g.memberId === activeMember.id);
 
   return (
-    <div>
+    <div style={{ position:"relative" }}>
+
+      {/* 🎉 Celebration Overlay */}
+      {celebration && (
+        <div style={{
+          position:"fixed", inset:0, zIndex:9999,
+          display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+          pointerEvents:"none",
+        }}>
+          {/* Dark backdrop */}
+          <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.45)", animation:"fadeInOut 3.5s ease forwards" }} />
+
+          {/* Balloons */}
+          {Array.from({length:12}).map((_,i) => (
+            <div key={i} style={{
+              position:"absolute",
+              bottom:-60,
+              left:`${8 + i*7.5}%`,
+              fontSize: 28 + (i%3)*8,
+              animation:`balloon${i%3} ${2.5+i*0.15}s ease-out forwards`,
+              animationDelay:`${i*0.08}s`,
+            }}>
+              {["🎈","🎉","🌟","✨","🏆","💫"][i%6]}
+            </div>
+          ))}
+
+          {/* Big message */}
+          <div style={{
+            position:"relative", zIndex:1,
+            background:"linear-gradient(135deg,#FF6B6B,#FFD93D,#6BCB77,#4D96FF)",
+            borderRadius:28, padding:"32px 48px", textAlign:"center",
+            boxShadow:"0 20px 60px rgba(0,0,0,0.3)",
+            animation:"popIn 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards",
+          }}>
+            <div style={{ fontSize:56, marginBottom:8 }}>🏆</div>
+            <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:42, fontWeight:700, color:"#fff", textShadow:"0 2px 8px rgba(0,0,0,0.2)", lineHeight:1.1 }}>
+              Goal Achieved!
+            </div>
+            <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:18, color:"rgba(255,255,255,0.9)", marginTop:10, maxWidth:280 }}>
+              "{celebration.label}"
+            </div>
+            <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:24, color:"rgba(255,255,255,0.85)", marginTop:8 }}>
+              🌟 Nice Job! 🌟
+            </div>
+          </div>
+
+          <style>{`
+            @keyframes popIn { from { transform:scale(0.3) rotate(-5deg); opacity:0; } to { transform:scale(1) rotate(0deg); opacity:1; } }
+            @keyframes fadeInOut { 0%{opacity:0} 10%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+            @keyframes balloon0 { from{transform:translateY(0) rotate(-10deg);opacity:0} 20%{opacity:1} to{transform:translateY(-110vh) rotate(10deg);opacity:0.8} }
+            @keyframes balloon1 { from{transform:translateY(0) rotate(5deg);opacity:0} 20%{opacity:1} to{transform:translateY(-115vh) rotate(-8deg);opacity:0.8} }
+            @keyframes balloon2 { from{transform:translateY(0) rotate(-3deg);opacity:0} 20%{opacity:1} to{transform:translateY(-105vh) rotate(12deg);opacity:0.8} }
+          `}</style>
+        </div>
+      )}
+
       {/* Member selector */}
       <div style={{ display:"flex", gap:8, overflowX:"auto", marginBottom:16 }}>
         {family.map(m => {
@@ -892,11 +1002,10 @@ function GoalsQuadrant({ family, goals }) {
             <button key={m.id} onClick={() => setActiveMember(m)} style={{
               display:"flex", alignItems:"center", gap:6, padding:"7px 14px",
               borderRadius:99, flexShrink:0, cursor:"pointer", transition:"all 0.15s",
-              background: active?m.color:T.stone,
-              border: active?`2px solid ${m.color}`:"2px solid transparent",
+              background: active?m.color:T.stone, border: active?`2px solid ${m.color}`:"2px solid transparent",
             }}>
               <span style={{fontSize:15}}>{m.emoji}</span>
-              <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color: active?"#fff":T.sub }}>{m.name}</span>
+              <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:active?"#fff":T.sub }}>{m.name}</span>
             </button>
           );
         })}
@@ -911,58 +1020,44 @@ function GoalsQuadrant({ family, goals }) {
       </div>
 
       {/* 2×2 grid with center portrait */}
-      <div style={{
-        position:"relative",
-        background:T.white,
-        borderRadius:16,
-        overflow:"hidden",
-        border:`2px solid ${T.border}`,
-      }}>
-        {/* Grid lines via CSS — horizontal line */}
+      <div style={{ position:"relative", background:T.white, borderRadius:16, overflow:"hidden", border:`2px solid ${T.border}` }}>
         <div style={{ position:"absolute", top:"50%", left:0, right:0, height:1, background:T.border, zIndex:1, transform:"translateY(-0.5px)" }} />
-        {/* Vertical line */}
         <div style={{ position:"absolute", left:"50%", top:0, bottom:0, width:1, background:T.border, zIndex:1, transform:"translateX(-0.5px)" }} />
-
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr" }}>
           {QUAD.map((q, qi) => {
             const isLeft = qi % 2 === 0;
             const isTop  = qi < 2;
             const qGoals = memberGoals[q.id] || [];
-
-            // Corner label positioning
             const labelStyle = {
-              fontFamily:"'Fredoka',sans-serif",
-              fontSize:13,
-              fontWeight:700,
-              color: q.color,
-              letterSpacing:0.5,
-              textTransform:"uppercase",
+              fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
+              color:q.color, letterSpacing:0.5, textTransform:"uppercase",
               position:"absolute",
-              ...(isTop    ? { top:10 }    : { bottom:10 }),
-              ...(isLeft   ? { left:12 }   : { right:12 }),
+              ...(isTop ? { top:10 } : { bottom:10 }),
+              ...(isLeft ? { left:12 } : { right:12, textAlign:"right" }),
             };
-
             return (
               <div key={q.id} style={{
-                position:"relative",
-                minHeight:150,
+                position:"relative", minHeight:150,
                 padding: isTop
                   ? (isLeft ? "36px 70px 24px 14px" : "36px 14px 24px 70px")
                   : (isLeft ? "24px 70px 36px 14px" : "24px 14px 36px 70px"),
               }}>
-                {/* Corner label */}
                 <div style={labelStyle}>{q.label}</div>
-
-                {/* Goals list */}
                 <div>
                   {qGoals.length === 0 ? (
-                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, fontStyle:"italic" }}>
-                      No goals yet
-                    </div>
+                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, fontStyle:"italic" }}>No goals yet</div>
                   ) : (
                     qGoals.map((g, i) => (
-                      <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:6, marginBottom:6 }}>
-                        <div style={{ width:5, height:5, borderRadius:"50%", background:q.color, flexShrink:0, marginTop:5 }} />
+                      <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:6, marginBottom:7, cursor:"pointer" }}
+                        onClick={() => completeGoal(activeMember.id, q.id, g)}>
+                        {/* Checkbox */}
+                        <div style={{
+                          width:16, height:16, borderRadius:5, border:`2px solid ${q.color}`,
+                          flexShrink:0, marginTop:2, display:"flex", alignItems:"center",
+                          justifyContent:"center", background:"transparent", transition:"all 0.15s",
+                        }}>
+                          <div style={{ width:8, height:8, borderRadius:2, background:"transparent" }} />
+                        </div>
                         <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600, color:T.text, lineHeight:1.45 }}>{g}</span>
                       </div>
                     ))
@@ -973,75 +1068,145 @@ function GoalsQuadrant({ family, goals }) {
           })}
         </div>
 
-        {/* Christ portrait — perfectly centered over the grid intersection */}
-        <div style={{
-          position:"absolute",
-          top:"50%", left:"50%",
-          transform:"translate(-50%,-50%)",
-          zIndex:10,
-          width:90, height:90,
-        }}>
-          {/* Color ring */}
+        {/* Christ portrait */}
+        <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", zIndex:10, width:90, height:90 }}>
           <ColorRing size={90} />
-
-          {/* Portrait circle */}
-          <div style={{
-            position:"absolute",
-            top:"50%", left:"50%",
-            transform:"translate(-50%,-50%)",
-            width:68, height:68,
-            borderRadius:"50%",
-            background:"linear-gradient(160deg, #F5E6C8 0%, #D4A76A 50%, #8B6340 100%)",
-            border:"3px solid #fff",
-            display:"flex", alignItems:"center", justifyContent:"center",
-            overflow:"hidden",
-            boxShadow:"0 3px 16px rgba(0,0,0,0.18)",
-          }}>
-            {/* Stylized face — warm tones representing Christ */}
+          <div style={{ position:"absolute", top:"50%", left:"50%", transform:"translate(-50%,-50%)", width:68, height:68, borderRadius:"50%", background:"linear-gradient(160deg, #F5E6C8 0%, #D4A76A 50%, #8B6340 100%)", border:"3px solid #fff", display:"flex", alignItems:"center", justifyContent:"center", overflow:"hidden", boxShadow:"0 3px 16px rgba(0,0,0,0.18)" }}>
             <svg width="68" height="68" viewBox="0 0 68 68" style={{ position:"absolute", top:0, left:0 }}>
-              {/* Background skin */}
               <circle cx="34" cy="34" r="34" fill="#C8935A"/>
-              {/* Hair */}
               <ellipse cx="34" cy="18" rx="18" ry="16" fill="#6B3A1F"/>
               <ellipse cx="34" cy="42" rx="20" ry="28" fill="#6B3A1F"/>
-              {/* Face */}
               <ellipse cx="34" cy="32" rx="13" ry="16" fill="#D4A46A"/>
-              {/* Eyes */}
               <ellipse cx="29" cy="30" rx="2" ry="2.5" fill="#3B2010"/>
               <ellipse cx="39" cy="30" rx="2" ry="2.5" fill="#3B2010"/>
-              {/* Nose */}
               <path d="M34 33 Q32 37 34 38 Q36 37 34 33" fill="#B8845A" opacity="0.6"/>
-              {/* Mouth */}
               <path d="M30 41 Q34 44 38 41" stroke="#9B6040" strokeWidth="1.5" fill="none" strokeLinecap="round"/>
-              {/* Beard */}
               <ellipse cx="34" cy="46" rx="10" ry="8" fill="#6B3A1F"/>
-              {/* Robe */}
               <path d="M14 68 Q20 55 34 52 Q48 55 54 68 Z" fill="#E8E0D0"/>
-              {/* Light halo suggestion */}
               <circle cx="34" cy="20" r="16" fill="none" stroke="#FFD700" strokeWidth="1" opacity="0.4"/>
             </svg>
           </div>
         </div>
       </div>
+
+      {/* Completed Goals */}
+      {memberCompleted.length > 0 && (
+        <div style={{ marginTop:20 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+            <span style={{ fontSize:20 }}>✅</span>
+            <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color:T.text }}>Achieved Goals</div>
+            <div style={{ background:"#2D7A56", color:"#fff", borderRadius:99, padding:"2px 10px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700 }}>{memberCompleted.length}</div>
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {memberCompleted.map((g, i) => {
+              const quad = QUAD.find(q => q.id === g.quadrant);
+              return (
+                <div key={i} style={{ background:"#F0FDF4", border:"1.5px solid #86EFAC", borderRadius:12, padding:"10px 14px", display:"flex", alignItems:"center", gap:10 }}>
+                  <span style={{ fontSize:20 }}>🏆</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:700, color:T.text, textDecoration:"line-through", opacity:0.7 }}>{g.label}</div>
+                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, marginTop:2 }}>{quad?.label || g.quadrant} · Achieved {g.date}</div>
+                  </div>
+                  <span style={{ fontSize:16 }}>✨</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ProgressPage({ family, goals, streaks, weekPts }) {
+function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, allCompletions, tasks, dbGoalRows }) {
   const [activeMember, setActiveMember] = useState(family[2] || family[0]);
 
-  const BADGES = {
-    dad:   ["🏗️ Builder","✝️ Leader","🔥 5-Day"],
-    mom:   ["🌿 Culture","❤️ Heart","🔥 7-Day","📋 Planner"],
-    bazel: ["🌟 Rainbow","📚 Bookworm","💪 Go-Getter"],
-    okrie: ["🎨 Creative","💛 Helper","📖 Stories","🔥 6-Day"],
-    saya:  ["🦋 First Steps","🌈 Sunshine","🐣 Early Riser"],
+  // ── Real Badge Engine ─────────────────────────────────────────────────────
+  // Badge definitions: { id, emoji, label, desc, category, check(stats) }
+  const BADGE_DEFS = [
+    // 🌈 Rainbow Day badges
+    { id:"rd_first",    emoji:"🌱", label:"First Rainbow",    desc:"Earned your first Rainbow Day",         category:"rainbow",    check: s => s.totalRainbow >= 1 },
+    { id:"rd_3",        emoji:"🌈", label:"Triple Rainbow",   desc:"3 Rainbow Days",                        category:"rainbow",    check: s => s.totalRainbow >= 3 },
+    { id:"rd_7",        emoji:"⭐", label:"Week of Rainbows", desc:"7 Rainbow Days total",                  category:"rainbow",    check: s => s.totalRainbow >= 7 },
+    { id:"rd_14",       emoji:"🌟", label:"Two Week Warrior", desc:"14 Rainbow Days total",                 category:"rainbow",    check: s => s.totalRainbow >= 14 },
+    { id:"rd_30",       emoji:"🏆", label:"Rainbow Champion", desc:"30 Rainbow Days total",                 category:"rainbow",    check: s => s.totalRainbow >= 30 },
+    { id:"rd_streak3",  emoji:"🔥", label:"On Fire",          desc:"3 Rainbow Days in a row",               category:"rainbow",    check: s => s.streak >= 3 },
+    { id:"rd_streak7",  emoji:"💥", label:"Unstoppable",      desc:"7 Rainbow Days in a row",               category:"rainbow",    check: s => s.streak >= 7 },
+    { id:"rd_week7",    emoji:"📅", label:"Perfect Week",     desc:"7 Rainbow Days in the last 7 days",     category:"rainbow",    check: s => s.rdWeek >= 7 },
+
+    // 📖 Learn badges
+    { id:"lrn_first",   emoji:"📚", label:"First Lesson",     desc:"Completed Learn tasks for the first time", category:"learn",  check: s => s.learnDays >= 1 },
+    { id:"lrn_7",       emoji:"🎓", label:"Scholar",          desc:"Completed Learn tasks 7 days",           category:"learn",   check: s => s.learnDays >= 7 },
+    { id:"lrn_14",      emoji:"🧠", label:"Deep Thinker",     desc:"Completed Learn tasks 14 days",          category:"learn",   check: s => s.learnDays >= 14 },
+    { id:"lrn_30",      emoji:"🏫", label:"Lifelong Learner", desc:"Completed Learn tasks 30 days",          category:"learn",   check: s => s.learnDays >= 30 },
+
+    // 💪 Exercise badges
+    { id:"ex_first",    emoji:"🌿", label:"First Workout",    desc:"Completed Exercise tasks for the first time", category:"exercise", check: s => s.exerciseDays >= 1 },
+    { id:"ex_7",        emoji:"💪", label:"Getting Strong",   desc:"Completed Exercise 7 days",              category:"exercise", check: s => s.exerciseDays >= 7 },
+    { id:"ex_14",       emoji:"🏃", label:"On the Move",      desc:"Completed Exercise 14 days",             category:"exercise", check: s => s.exerciseDays >= 14 },
+    { id:"ex_30",       emoji:"🏅", label:"Athlete",          desc:"Completed Exercise 30 days",             category:"exercise", check: s => s.exerciseDays >= 30 },
+
+    // 🤝 Contribute badges
+    { id:"con_first",   emoji:"✨", label:"Helping Hand",     desc:"Completed Contribute tasks for the first time", category:"contribute", check: s => s.contributeDays >= 1 },
+    { id:"con_7",       emoji:"🏠", label:"Home Hero",        desc:"Contributed 7 days",                    category:"contribute", check: s => s.contributeDays >= 7 },
+    { id:"con_14",      emoji:"⭐", label:"Team Player",      desc:"Contributed 14 days",                   category:"contribute", check: s => s.contributeDays >= 14 },
+    { id:"con_30",      emoji:"👑", label:"Family MVP",       desc:"Contributed 30 days",                   category:"contribute", check: s => s.contributeDays >= 30 },
+
+    // 🎯 Goal badges
+    { id:"goal_set",    emoji:"🗺️", label:"Goal Setter",      desc:"Created at least one Goal task",        category:"goals",   check: s => s.goalsSet >= 1 },
+    { id:"goal_5set",   emoji:"🧭", label:"Visionary",        desc:"Created 5 or more Goal tasks",          category:"goals",   check: s => s.goalsSet >= 5 },
+    { id:"goal_first",  emoji:"🎯", label:"On Target",        desc:"Completed Goal tasks for the first time", category:"goals", check: s => s.goalsDays >= 1 },
+    { id:"goal_7",      emoji:"🚀", label:"Dream Chaser",     desc:"Completed Goal tasks 7 days",           category:"goals",   check: s => s.goalsDays >= 7 },
+    { id:"goal_14",     emoji:"💫", label:"Goal Crusher",     desc:"Completed Goal tasks 14 days",          category:"goals",   check: s => s.goalsDays >= 14 },
+    { id:"goal_30",     emoji:"🌠", label:"Legend",           desc:"Completed Goal tasks 30 days",          category:"goals",   check: s => s.goalsDays >= 30 },
+  ];
+
+  const CATEGORY_COLORS = {
+    rainbow:    { bg:"#F3E5FF", border:"#C77DFF44", text:"#7B3FA0", label:"🌈 Rainbow Days" },
+    learn:      { bg:"#E0EDFF", border:"#4D96FF44", text:"#2A5FA8", label:"📖 Learn" },
+    exercise:   { bg:"#E5F7E8", border:"#6BCB7744", text:"#2D7A3D", label:"💪 Exercise" },
+    contribute: { bg:"#FFF0E0", border:"#FF9F4544", text:"#A85A00", label:"🤝 Contribute" },
+    goals:      { bg:"#FFF0F8", border:"#FF69B444", text:"#A0306A", label:"🎯 Goals" },
   };
+
+  function getMemberStats(memberId) {
+    const memberComps = (allCompletions||[]).filter(c => c.member_id === memberId);
+    // Get unique dates where each section had at least one completion
+    const datesBySection = { learn:new Set(), exercise:new Set(), contribute:new Set(), goals:new Set() };
+    memberComps.forEach(c => {
+      // We need to determine which section this task belongs to
+      const memberTasks = tasks[memberId] || {};
+      for (const sec of ["learn","exercise","contribute","goals"]) {
+        if ((memberTasks[sec]||[]).some(t => t.label === c.task_label)) {
+          datesBySection[sec].add(c.completed_date);
+        }
+      }
+    });
+    const memberRd = (rainbowDays||[]).filter(r => r.member_id === memberId);
+    const now = new Date();
+    const weekAgo = new Date(now); weekAgo.setDate(now.getDate()-7);
+    const memberGoals = tasks[memberId]?.goals || [];
+    return {
+      totalRainbow:   memberRd.length,
+      streak:         streaks[memberId] || 0,
+      rdWeek:         memberRd.filter(r => new Date(r.date+"T00:00:00") >= weekAgo).length,
+      learnDays:      datesBySection.learn.size,
+      exerciseDays:   datesBySection.exercise.size,
+      contributeDays: datesBySection.contribute.size,
+      goalsDays:      datesBySection.goals.size,
+      goalsSet:       memberGoals.length,
+    };
+  }
+
+  function getEarnedBadges(memberId) {
+    const stats = getMemberStats(memberId);
+    return BADGE_DEFS.filter(b => b.check(stats));
+  }
 
   const streak  = streaks[activeMember.id]  || 0;
   const wPts    = weekPts[activeMember.id]  || 0;
   const todayPts = SECTIONS.length;
-  const badges  = BADGES[activeMember.id]   || [];
+  const earnedBadges = getEarnedBadges(activeMember.id);
 
   return (
     <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
@@ -1060,36 +1225,70 @@ function ProgressPage({ family, goals, streaks, weekPts }) {
 
       <div className="scroll-col" style={{ flex:1, overflowY:"auto", padding:"16px 16px 28px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
 
-        {/* Rainbow Streak */}
-        <div style={{ borderRadius:22, overflow:"hidden", marginBottom:16, padding:"20px 20px 16px", position:"relative", background:"linear-gradient(135deg,#1A2F4B,#0F1E30)" }}>
-          {[["12%",18],["35%",42],["58%",12],["78%",55],["90%",28],["22%",65],["68%",38]].map(([left,top],i) => (
-            <div key={i} style={{ position:"absolute", top:`${top}%`, left, width:2, height:2, background:"#fff", borderRadius:"50%", opacity:0.3 }} />
-          ))}
-          <div style={{ position:"relative", zIndex:1 }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
-              <div>
-                <div style={{ fontSize:11, fontWeight:600, color:"rgba(255,255,255,0.4)", letterSpacing:1, textTransform:"uppercase", marginBottom:5 }}>Rainbow Days</div>
-                <div style={{ fontSize:30, fontWeight:700, color:"#fff", lineHeight:1 }}>🔥 {streak}-Day Streak</div>
-                <div style={{ fontSize:13, color:"rgba(255,255,255,0.45)", marginTop:5 }}>Best: {streak+3} days in a row</div>
-              </div>
-              <div style={{ textAlign:"center" }}>
-                <div style={{ fontSize:44, lineHeight:1 }}>🌈</div>
-                <div style={{ fontSize:10, color:"rgba(255,255,255,0.4)", marginTop:3 }}>Keep it going!</div>
-              </div>
-            </div>
-            <div style={{ display:"flex", gap:5 }}>
-              {["M","T","W","T","F","S","S"].map((d,i) => {
-                const earned = i < streak;
-                return (
-                  <div key={i} style={{ flex:1, textAlign:"center" }}>
-                    <div style={{ height:34, borderRadius:9, marginBottom:4, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15, backgroundImage: earned?RAINBOW_GRAD:"none", background: earned?"none":"rgba(255,255,255,0.07)" }}>{earned?"🌈":""}</div>
-                    <div style={{ fontSize:9, color:"rgba(255,255,255,0.35)", fontWeight:700 }}>{d}</div>
+        {/* Rainbow Streak + Stats */}
+        {(() => {
+          const memberRd = (rainbowDays||[]).filter(r => r.member_id === activeMember.id);
+          const now = new Date();
+          const weekAgo  = new Date(now); weekAgo.setDate(now.getDate()-7);
+          const monthAgo = new Date(now); monthAgo.setDate(now.getDate()-30);
+          const rdWeek  = memberRd.filter(r => new Date(r.date+"T00:00:00") >= weekAgo).length;
+          const rdMonth = memberRd.filter(r => new Date(r.date+"T00:00:00") >= monthAgo).length;
+
+          // Build last-7-days grid
+          const last7 = Array.from({length:7}, (_,i) => {
+            const d = new Date(now); d.setDate(now.getDate() - (6-i));
+            const dStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+            const dayLabel = ["Su","Mo","Tu","We","Th","Fr","Sa"][d.getDay()];
+            const earned = memberRd.some(r => r.date === dStr);
+            return { dStr, dayLabel, earned, isToday: d.toDateString()===new Date().toDateString() };
+          });
+
+          return (<>
+            {/* Streak card */}
+            <div style={{ borderRadius:22, overflow:"hidden", marginBottom:12, padding:"18px 20px 14px", position:"relative", background:"linear-gradient(135deg,#1A2F4B,#0F1E30)" }}>
+              {[["12%",18],["35%",42],["58%",12],["78%",55],["90%",28]].map(([left,top],i) => (
+                <div key={i} style={{ position:"absolute", top:`${top}%`, left, width:2, height:2, background:"#fff", borderRadius:"50%", opacity:0.3 }} />
+              ))}
+              <div style={{ position:"relative", zIndex:1 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+                  <div>
+                    <div style={{ fontSize:11, fontWeight:600, color:"rgba(255,255,255,0.4)", letterSpacing:1, textTransform:"uppercase", marginBottom:5 }}>Rainbow Day Streak</div>
+                    <div style={{ fontSize:34, fontWeight:700, color:"#fff", lineHeight:1 }}>
+                      {streak > 0 ? `🔥 ${streak}-Day Streak` : "🌈 Start your streak!"}
+                    </div>
+                    {streak > 0 && <div style={{ fontSize:12, color:"rgba(255,255,255,0.45)", marginTop:4 }}>Complete all 4 sections every day to keep it going</div>}
                   </div>
-                );
-              })}
+                  <div style={{ fontSize:44 }}>🌈</div>
+                </div>
+                {/* Last 7 days */}
+                <div style={{ display:"flex", gap:5 }}>
+                  {last7.map(({dStr, dayLabel, earned, isToday}) => (
+                    <div key={dStr} style={{ flex:1, textAlign:"center" }}>
+                      <div style={{ height:34, borderRadius:9, marginBottom:4, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, backgroundImage:earned?RAINBOW_GRAD:"none", background:earned?"none":"rgba(255,255,255,0.07)", border:isToday?"2px solid rgba(255,255,255,0.3)":"2px solid transparent" }}>
+                        {earned?"🌈":""}
+                      </div>
+                      <div style={{ fontSize:9, color:isToday?"rgba(255,255,255,0.7)":"rgba(255,255,255,0.35)", fontWeight:700 }}>{dayLabel}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+
+            {/* Weekly + Monthly stats */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:14 }}>
+              <div style={{ background:"#FFF8E0", borderRadius:16, border:"2px solid #FFD93D44", padding:"14px 12px", textAlign:"center" }}>
+                <div style={{ fontSize:28 }}>📅</div>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:28, fontWeight:700, color:"#D4732A", marginTop:2 }}>{rdWeek}</div>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>rainbow days this week</div>
+              </div>
+              <div style={{ background:"#F0FDF4", borderRadius:16, border:"2px solid #86EFAC44", padding:"14px 12px", textAlign:"center" }}>
+                <div style={{ fontSize:28 }}>🗓️</div>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:28, fontWeight:700, color:"#2D7A56", marginTop:2 }}>{rdMonth}</div>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>rainbow days this month</div>
+              </div>
+            </div>
+          </>);
+        })()}
 
         {/* Points & Money */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
@@ -1106,17 +1305,55 @@ function ProgressPage({ family, goals, streaks, weekPts }) {
           ))}
         </div>
 
+         {/* ── Badge Showcase — shown first ── */}
+         {(() => {
+           const earned = getEarnedBadges(activeMember.id);
+           const categories = ["rainbow","learn","exercise","contribute","goals"];
+           if (earned.length === 0) return (
+             <div style={{ background:T.white, borderRadius:20, border:`2px solid ${T.border}`, padding:"24px 20px", marginBottom:16, textAlign:"center" }}>
+               <div style={{ fontSize:48, marginBottom:8 }}>🌱</div>
+               <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color:T.text, marginBottom:4 }}>No badges yet!</div>
+               <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted }}>Complete tasks on the Today page to start earning badges</div>
+             </div>
+           );
+           return (
+             <div style={{ marginBottom:16 }}>
+               <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
+                 <div style={{ fontSize:22 }}>🏅</div>
+                 <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:20, fontWeight:700, color:T.text }}>{activeMember.name}'s Badges</div>
+                 <div style={{ background:activeMember.color, color:"#fff", borderRadius:99, padding:"2px 10px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>{earned.length} earned</div>
+               </div>
+               {categories.map(cat => {
+                 const catBadges = BADGE_DEFS.filter(b => b.category === cat);
+                 const catEarned = catBadges.filter(b => earned.some(e => e.id === b.id));
+                 const cc = CATEGORY_COLORS[cat];
+                 return (
+                   <div key={cat} style={{ background:cc.bg, border:`2px solid ${cc.border}`, borderRadius:16, padding:"14px 16px", marginBottom:10 }}>
+                     <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:cc.text, marginBottom:10 }}>
+                       {cc.label} · {catEarned.length}/{catBadges.length}
+                     </div>
+                     <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                       {catBadges.map(b => {
+                         const isEarned = catEarned.some(e => e.id === b.id);
+                         return (
+                           <div key={b.id} title={b.desc} style={{ display:"flex", flexDirection:"column", alignItems:"center", width:68, opacity:isEarned?1:0.25, filter:isEarned?"none":"grayscale(1)", cursor:"default" }}>
+                             <div style={{ width:50, height:50, borderRadius:14, background:isEarned?"#fff":"rgba(0,0,0,0.04)", border:isEarned?`2px solid ${cc.border.replace("44","BB")}`:"2px solid transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:24, boxShadow:isEarned?"0 2px 8px rgba(0,0,0,0.1)":"none", marginBottom:4 }}>
+                               {b.emoji}
+                             </div>
+                             <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:9, fontWeight:700, color:cc.text, textAlign:"center", lineHeight:1.2 }}>{b.label}</div>
+                           </div>
+                         );
+                       })}
+                     </div>
+                   </div>
+                 );
+               })}
+             </div>
+           );
+         })()}
         {/* Goals Quadrant — styled like the image */}
-        <GoalsQuadrant family={family} goals={goals} />
+        <GoalsQuadrant family={family} goals={goals} setGoals={setGoals} dbGoalRows={dbGoalRows} />
 
-        {/* Badges */}
-        <h3 style={{ fontSize:18, fontWeight:700, color:T.text, margin:"20px 0 10px" }}>Badges Earned 🏅</h3>
-        <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-          {badges.map((b,i) => (
-            <div key={i} style={{ background:activeMember.light, color:activeMember.color, border:`2px solid ${activeMember.color}44`, borderRadius:99, padding:"7px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600 }}>{b}</div>
-          ))}
-          <div style={{ background:T.stone, color:T.muted, border:`2px dashed ${T.border}`, borderRadius:99, padding:"7px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13 }}>More to unlock…</div>
-        </div>
       </div>
     </div>
   );
@@ -1887,6 +2124,8 @@ function AppInner() {
   const [goals,            setGoals]            = useState(INIT_GOALS);
   const [streaks,          setStreaks]           = useState(INIT_STREAKS);
   const [weekPts,          setWeekPts]          = useState(INIT_WEEK_PTS);
+  const [rainbowDays,      setRainbowDays]       = useState([]);
+  const [allCompletions,   setAllCompletions]    = useState([]);
   const [dbTaskRows,       setDbTaskRows]        = useState([]);
   const [dbGoalRows,       setDbGoalRows]        = useState([]);
 
@@ -1925,6 +2164,13 @@ function AppInner() {
 
       // Merge manual + Google Calendar events
       setEvents([...manualEvents, ...gcalEvents]);
+      const rdRows = await SB.getRainbowDays().catch(() => []);
+      setRainbowDays(rdRows || []);
+      // Fetch last 60 days of completions for badge calculation
+      const allCompRows = await sb("task_completions", "GET", null,
+        `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
+      ).catch(() => []);
+      setAllCompletions(allCompRows || []);
       setChoreAssignments(dbChoresToApp(choreRows || []));
       setDbTaskRows(taskRows || []);
       setTasks(dbTasksToApp(taskRows || []));
@@ -2025,8 +2271,8 @@ function AppInner() {
     <div style={{ background:T.bg, width:"100vw", minHeight:"100vh", overflowX:"hidden" }}>
       <TopBar onAdmin={goAdmin} />
       {page==="calendar" && <CalendarPage family={family} events={events} />}
-      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} />}
-      {page==="progress" && <ProgressPage family={family} goals={goals} streaks={streaks} weekPts={weekPts} />}
+      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} onRainbowDay={(memberId, dateStr) => { SB.logRainbowDay(memberId, dateStr); SB.getRainbowDays().then(r => setRainbowDays(r||[])); }} />}
+      {page==="progress" && <ProgressPage family={family} goals={goals} setGoals={setGoals} streaks={streaks} weekPts={weekPts} rainbowDays={rainbowDays} allCompletions={allCompletions} tasks={tasks} dbGoalRows={dbGoalRows} />}
       <BottomNav page={page} onPage={setPage} />
     </div>
   );
