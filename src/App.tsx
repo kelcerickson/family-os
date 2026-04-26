@@ -114,10 +114,17 @@ function dbTasksToApp(rows) {
   return result;
 }
 function dbGoalsToApp(rows) {
-  const result = {};
+  // Start with empty structure for all known members
+  const result = {
+    dad:   { spiritual:[], social:[], physical:[], intellectual:[] },
+    mom:   { spiritual:[], social:[], physical:[], intellectual:[] },
+    bazel: { spiritual:[], social:[], physical:[], intellectual:[] },
+    okrie: { spiritual:[], social:[], physical:[], intellectual:[] },
+    saya:  { spiritual:[], social:[], physical:[], intellectual:[] },
+  };
   (rows||[]).forEach(r => {
     if (!result[r.member_id]) result[r.member_id] = { spiritual:[], social:[], physical:[], intellectual:[] };
-    if (result[r.member_id][r.quadrant]) result[r.member_id][r.quadrant].push(r.label);
+    if (result[r.member_id][r.quadrant] !== undefined) result[r.member_id][r.quadrant].push(r.label);
   });
   return result;
 }
@@ -892,7 +899,7 @@ function ColorRing({ size = 100 }) {
 }
 
 function GoalsQuadrant({ family, goals, setGoals, dbGoalRows }) {
-  const [activeMember, setActiveMember] = useState(family[2] || family[0]);
+  const [activeMember, setActiveMember] = useState(family[0]);
   const [completedGoals, setCompletedGoals] = useState([]); // { label, quadrant, memberId, date }
   const [celebration, setCelebration] = useState(null); // { label }
   const memberGoals = goals[activeMember.id] || {};
@@ -1027,7 +1034,8 @@ function GoalsQuadrant({ family, goals, setGoals, dbGoalRows }) {
           {QUAD.map((q, qi) => {
             const isLeft = qi % 2 === 0;
             const isTop  = qi < 2;
-            const qGoals = memberGoals[q.id] || [];
+            const completedLabels = new Set(completedGoals.filter(g => g.memberId===activeMember.id && g.quadrant===q.id).map(g=>g.label));
+            const qGoals = (memberGoals[q.id] || []).filter(g => !completedLabels.has(g));
             const labelStyle = {
               fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
               color:q.color, letterSpacing:0.5, textTransform:"uppercase",
@@ -1119,7 +1127,7 @@ function GoalsQuadrant({ family, goals, setGoals, dbGoalRows }) {
 }
 
 function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, allCompletions, tasks, dbGoalRows }) {
-  const [activeMember, setActiveMember] = useState(family[2] || family[0]);
+  const [activeMember, setActiveMember] = useState(family[0]);
 
   // ── Real Badge Engine ─────────────────────────────────────────────────────
   // Badge definitions: { id, emoji, label, desc, category, check(stats) }
