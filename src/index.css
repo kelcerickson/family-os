@@ -11,19 +11,31 @@ html, body {
   padding: 0 !important;
   width: 100% !important;
   overflow-x: hidden !important;
+  background-color: #F7F5F0 !important;
 }
 
 *, *::before, *::after {
   box-sizing: border-box !important;
+  -webkit-tap-highlight-color: transparent;
 }
 
-::-webkit-scrollbar { display: none !important; }
-* { scrollbar-width: none !important; }
+/* CRITICAL: Enable touch scrolling on ALL overflow containers */
+div {
+  -webkit-overflow-scrolling: touch;
+}
 
-.scroll-col {
+/* Scrollable divs must have touch-action pan */  
+[style*="overflow-y: scroll"],
+[style*="overflow-y:scroll"],
+[style*="overflow-y: auto"],
+[style*="overflow-y:auto"] {
   -webkit-overflow-scrolling: touch !important;
   touch-action: pan-y !important;
-  user-select: none !important;
-  -webkit-user-select: none !important;
-  overflow-y: auto !important;
+  overscroll-behavior: contain;
 }
+
+/* Hide scrollbars but keep scroll functional */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
+* { scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.12) transparent; }
