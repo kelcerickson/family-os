@@ -551,7 +551,7 @@ function CalendarPage({ family, events }) {
   const visibleEvents = events.filter(ev => ev.memberIds.some(id => visibleIds.has(id)));
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
+    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", touchAction:"pan-y", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
       <div style={{ background:T.white, borderBottom:`2px solid ${T.border}`, padding:"12px 16px 0", flexShrink:0, width:"100%" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
           <h1 style={{ fontSize:24, fontWeight:700, color:T.text, margin:0 }}>{MONTHS[weekDates[0].getMonth()]} {weekDates[0].getFullYear()}</h1>
@@ -692,7 +692,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
           })}
         </div>
       </div>
-      <div className="scroll-col" style={{ flex:1, overflowY:"auto", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
+      <div style={{ flex:1, overflowY:"scroll", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
         {SECTIONS.map(sec => {
           const secTasks = tasks[sec.id] || [];
           // Merge completion state from Supabase into each task
@@ -784,7 +784,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay }) {
   const allKidsRainbow = family.filter(m => m.defaultOn).every(m => allSectionsDone(taskState[m.id]||{}));
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
+    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", touchAction:"pan-y", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
       <div style={{ borderBottom:`2px solid ${T.border}`, padding:"10px 14px", flexShrink:0, background: allKidsRainbow?"none":T.white, backgroundImage: allKidsRainbow?RAINBOW_GRAD:"none", transition:"all 0.8s ease" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
           <div>
@@ -1217,7 +1217,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
   const earnedBadges = getEarnedBadges(activeMember.id);
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
+    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", touchAction:"pan-y", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
       {/* Member selector */}
       <div style={{ background:T.white, borderBottom:`2px solid ${T.border}`, display:"flex", overflowX:"auto", padding:"10px 12px", gap:8, flexShrink:0 }}>
         {family.map(m => {
@@ -1231,7 +1231,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
         })}
       </div>
 
-      <div className="scroll-col" style={{ flex:1, overflowY:"auto", overflowX:"hidden", padding:"16px 16px 80px", WebkitOverflowScrolling:"touch", touchAction:"pan-y" }}>
+      <div style={{ flex:1, overflowY:"scroll", overflowX:"hidden", padding:"16px 16px 80px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", msOverflowStyle:"none" }}>
 
         {/* ── Badge Showcase — compact emoji strip at top ── */}
         {(() => {
@@ -1351,57 +1351,6 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
           ))}
         </div>
 
-         {/* ── Badge Showcase — compact emoji strip at top ── */}
-         {(() => {
-           const earned = getEarnedBadges(activeMember.id);
-           return (
-             <div style={{ background:T.white, borderRadius:18, border:`2px solid ${T.border}`, padding:"14px 16px", marginBottom:14 }}>
-               <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
-                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                   <span style={{ fontSize:18 }}>🏅</span>
-                   <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text }}>
-                     {activeMember.name}'s Badges
-                   </span>
-                 </div>
-                 <div style={{ background:activeMember.color, color:"#fff", borderRadius:99, padding:"2px 10px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700 }}>
-                   {earned.length}/{BADGE_DEFS.length}
-                 </div>
-               </div>
-               {earned.length === 0 ? (
-                 <div style={{ textAlign:"center", padding:"8px 0", fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted }}>
-                   🌱 Complete tasks to earn badges!
-                 </div>
-               ) : (
-                 <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                   {earned.map(b => (
-                     <div key={b.id} title={`${b.label}: ${b.desc}`} style={{
-                       width:44, height:44, borderRadius:12,
-                       background:`${activeMember.color}18`,
-                       border:`1.5px solid ${activeMember.color}44`,
-                       display:"flex", alignItems:"center", justifyContent:"center",
-                       fontSize:22, cursor:"default",
-                       boxShadow:"0 1px 4px rgba(0,0,0,0.08)",
-                     }}>
-                       {b.emoji}
-                     </div>
-                   ))}
-                   {/* Show remaining locked badges as grey */}
-                   {BADGE_DEFS.filter(b => !earned.some(e=>e.id===b.id)).map(b => (
-                     <div key={b.id} title={`${b.label}: ${b.desc}`} style={{
-                       width:44, height:44, borderRadius:12,
-                       background:"rgba(0,0,0,0.04)",
-                       border:"1.5px solid rgba(0,0,0,0.08)",
-                       display:"flex", alignItems:"center", justifyContent:"center",
-                       fontSize:22, opacity:0.2, cursor:"default", filter:"grayscale(1)",
-                     }}>
-                       {b.emoji}
-                     </div>
-                   ))}
-                 </div>
-               )}
-             </div>
-           );
-         })()}
         {/* Goals Quadrant — styled like the image */}
         <GoalsQuadrant family={family} goals={goals} setGoals={setGoals} dbGoalRows={dbGoalRows} />
 
@@ -1450,7 +1399,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
         </div>
       </div>
 
-      <div style={{ padding:"24px 24px 100px", maxWidth:900, margin:"0 auto", overflowY:"auto", minHeight:"calc(100vh - 140px)", WebkitOverflowScrolling:"touch", touchAction:"pan-y" }}>
+      <div style={{ padding:"24px 24px 100px", maxWidth:900, margin:"0 auto", overflowY:"scroll", minHeight:"calc(100vh - 140px)", WebkitOverflowScrolling:"touch", touchAction:"pan-y" }}>
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
         {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
