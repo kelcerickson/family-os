@@ -2210,3 +2210,230 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
 }
 
 
+
+// ── Admin Goals ──────────────────────────────────────────────────────────────
+function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
+  const [activeMember, setActiveMember] = useState(family[0]);
+  const [activeQuad, setActiveQuad] = useState("spiritual");
+  const [newGoal, setNewGoal] = useState("");
+  const quad = QUAD.find(q=>q.id===activeQuad);
+  const currentGoals = goals[activeMember.id]?.[activeQuad] || [];
+
+  async function addGoal() {
+    if (!newGoal.trim()) return;
+    await SB.addGoal(activeMember.id, activeQuad, newGoal.trim());
+    setGoals(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [activeQuad]: [...(prev[activeMember.id]?.[activeQuad]||[]), newGoal.trim()] } }));
+    setNewGoal("");
+  }
+
+  return (
+    <div>
+      <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>🎯 Goal Setup</h2>
+      <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>Add goals per person in each quadrant.</p>
+      <div style={{ display:"flex", gap:8, marginBottom:16, overflowX:"auto" }}>
+        {family.map(m => (
+          <button key={m.id} onClick={() => setActiveMember(m)} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", borderRadius:99, flexShrink:0, cursor:"pointer", background: activeMember.id===m.id?m.color:T.stone, border: activeMember.id===m.id?`2px solid ${m.color}`:"2px solid transparent" }}>
+            <span style={{fontSize:15}}>{m.emoji}</span>
+            <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, color: activeMember.id===m.id?"#fff":T.sub }}>{m.name}</span>
+          </button>
+        ))}
+      </div>
+      <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
+        {QUAD.map(q => (
+          <button key={q.id} onClick={() => setActiveQuad(q.id)} style={{ padding:"9px 14px", borderRadius:12, border:"none", cursor:"pointer", background: activeQuad===q.id?q.color:T.stone, color: activeQuad===q.id?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>
+            {q.icon} {q.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px", marginBottom:14 }}>
+        <div style={{ fontSize:16, fontWeight:700, color:T.text, marginBottom:12 }}>{activeMember.name}'s {quad?.label} Goals</div>
+        {currentGoals.length===0
+          ? <div style={{ textAlign:"center", padding:"16px 0", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No goals yet — add one below</div>
+          : currentGoals.map((g,i) => (
+            <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:6 }}>
+              <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{g}</span>
+              <button onClick={async () => {
+                if (dbGoalRows) {
+                  const row = dbGoalRows.find(r => r.member_id===activeMember.id && r.quadrant===activeQuad && r.label===g);
+                  if (row) await SB.deleteGoal(row.id);
+                }
+                setGoals(prev=>({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [activeQuad]: prev[activeMember.id][activeQuad].filter((_,idx)=>idx!==i) } }));
+              }} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, fontWeight:700, cursor:"pointer" }}>×</button>
+            </div>
+          ))
+        }
+      </div>
+      <div style={{ display:"flex", gap:10 }}>
+        <input value={newGoal} onChange={e=>setNewGoal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addGoal()} placeholder={`Add a ${quad?.label?.toLowerCase()||""} goal for ${activeMember.name}…`} style={{ flex:1, padding:"12px 16px", borderRadius:12, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14 }} />
+        <button onClick={addGoal} style={{ padding:"12px 20px", borderRadius:12, background:quad?.color||T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>Add</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Error Boundary ────────────────────────────────────────────────────────────
+class ErrorBoundary extends Component {
+  state = { error: null };
+  static getDerivedStateFromError(e) { return { error: e }; }
+  render() {
+    if (this.state.error) return (
+      <div style={{ padding:40, fontFamily:"sans-serif", background:"#fff1f0", minHeight:"100vh" }}>
+        <h2 style={{ color:"#c00" }}>⚠️ App Error</h2>
+        <pre style={{ fontSize:12, background:"#fff", padding:16, borderRadius:8, overflow:"auto" }}>
+          {this.state.error.toString()}
+        </pre>
+        <button onClick={() => window.location.reload()} style={{ marginTop:16, padding:"10px 20px", fontSize:16, cursor:"pointer" }}>Reload</button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
+// ── Root App ──────────────────────────────────────────────────────────────────
+function AppInner() {
+  const [page, setPage]   = useState("today");
+  const [family]          = useState(FAMILY_INIT);
+  const [adminMode, setAdminMode] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [screensaver, setScreensaver] = useState(false);
+
+  const [events,           setEvents]           = useState([]);
+  const [choreAssignments, setChoreAssignments] = useState({});
+  const [tasks,            setTasks]            = useState(INIT_TASKS);
+  const [goals,            setGoals]            = useState(INIT_GOALS);
+  const [streaks,          setStreaks]           = useState(INIT_STREAKS);
+  const [weekPts,          setWeekPts]          = useState(INIT_WEEK_PTS);
+  const [rainbowDays,      setRainbowDays]       = useState([]);
+  const [allCompletions,   setAllCompletions]    = useState([]);
+  const [dbTaskRows,       setDbTaskRows]        = useState([]);
+  const [dbGoalRows,       setDbGoalRows]        = useState([]);
+
+  async function loadAll() {
+    setLoading(true);
+    try {
+      const evRows    = await SB.getEvents().catch(() => []);
+      const choreRows = await SB.getChores().catch(() => []);
+      const taskRows  = await SB.getTasks().catch(() => []);
+      const goalRows  = await SB.getGoals().catch(() => []);
+      const manualEvents = dbEventsToApp(evRows || []);
+
+      const gcalEvents = [];
+      for (const member of FAMILY_INIT) {
+        try {
+          const res = await fetch(`/api/calendar/events?memberId=${member.id}`);
+          if (res.status === 200) {
+            const text = await res.text();
+            try {
+              const data = JSON.parse(text);
+              console.log(`📅 ${member.id}: ${data.events?.length || 0} events from`, data.calendarsFound?.join(', '));
+              if (data.events && data.events.length > 0) gcalEvents.push(...data.events);
+            } catch(parseErr) {
+              console.warn(`⚠️ ${member.id} JSON parse failed`);
+            }
+          } else if (res.status !== 404) {
+            console.warn(`⚠️ ${member.id} returned ${res.status}`);
+          }
+        } catch(e) {
+          console.warn(`⚠️ ${member.id} fetch error:`, e.message);
+        }
+      }
+      console.log(`📅 Total Google Calendar events loaded: ${gcalEvents.length}`);
+
+      setEvents([...manualEvents, ...gcalEvents]);
+      setChoreAssignments(dbChoresToApp(choreRows || []));
+      setDbTaskRows(taskRows || []);
+      setTasks(dbTasksToApp(taskRows || []));
+      setDbGoalRows(goalRows || []);
+      setGoals(dbGoalsToApp(goalRows || []));
+
+      const rdRows = await SB.getRainbowDays().catch(() => []);
+      setRainbowDays(rdRows || []);
+      const allCompRows = await sb("task_completions", "GET", null,
+        `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
+      ).catch(() => []);
+      setAllCompletions(allCompRows || []);
+    } catch(e) {
+      console.error("Load error:", e);
+    }
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    // Override root styles
+    const rootEl = document.getElementById('root');
+    if (rootEl) rootEl.style.cssText = 'max-width:100%!important;width:100%!important;margin:0!important;padding:0!important;';
+    const overrideStyle = document.createElement('style');
+    overrideStyle.textContent = '#root{max-width:100%!important;width:100%!important;margin:0!important;padding:0!important;}';
+    document.head.appendChild(overrideStyle);
+
+    loadAll();
+
+    // Screensaver inactivity timer
+    let timer = null;
+    function resetTimer() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setScreensaver(true), SCREENSAVER_TIMEOUT_MS);
+    }
+    function onActivity() { setScreensaver(false); resetTimer(); }
+    const events = ["mousedown","mousemove","keypress","touchstart","click","scroll"];
+    events.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
+    resetTimer();
+
+    const check = () => {
+      const hash = window.location.hash;
+      setAdminMode(hash.startsWith("#admin"));
+      if (hash.includes("calendar_connected=true")) loadAll();
+    };
+    window.addEventListener("hashchange", check);
+    check();
+
+    return () => {
+      window.removeEventListener("hashchange", check);
+      events.forEach(e => window.removeEventListener(e, onActivity));
+      if (timer) clearTimeout(timer);
+    };
+  }, []);
+
+  const goAdmin = () => { window.location.hash = "#admin"; };
+
+  const screensaverEl = screensaver ? <Screensaver onDismiss={() => setScreensaver(false)} /> : null;
+
+  if (loading) return (
+    <>
+      {screensaverEl}
+      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100vh", background:T.bg, fontFamily:"'Fredoka',sans-serif", gap:16 }}>
+        <div style={{ fontSize:48 }}>🏡</div>
+        <div style={{ fontSize:20, fontWeight:700, color:T.text }}>Loading Family OS…</div>
+        <div style={{ fontSize:14, color:T.muted }}>Connecting to database</div>
+      </div>
+    </>
+  );
+
+  if (adminMode) return <AdminPage
+    family={family} events={events} setEvents={setEvents}
+    tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals}
+    choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments}
+    dbTaskRows={dbTaskRows} dbGoalRows={dbGoalRows} onReload={loadAll}
+  />;
+
+  return (
+    <div style={{ background:T.bg, width:"100vw", minHeight:"100vh", overflowX:"hidden", userSelect:"none", WebkitUserSelect:"none", MozUserSelect:"none", touchAction:"pan-y" }}>
+      {screensaverEl}
+      <TopBar onAdmin={goAdmin} />
+      {page==="calendar" && <CalendarPage family={family} events={events} />}
+      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments}
+        onRainbowDay={(memberId, dateStr) => {
+          SB.logRainbowDay(memberId, dateStr);
+          SB.getRainbowDays().then(r => setRainbowDays(r||[]));
+        }} />}
+      {page==="progress" && <ProgressPage family={family} goals={goals} setGoals={setGoals}
+        streaks={streaks} weekPts={weekPts} rainbowDays={rainbowDays}
+        allCompletions={allCompletions} tasks={tasks} dbGoalRows={dbGoalRows} />}
+      <BottomNav page={page} onPage={setPage} />
+    </div>
+  );
+}
+
+export default function App() {
+  return <ErrorBoundary><AppInner /></ErrorBoundary>;
+}
