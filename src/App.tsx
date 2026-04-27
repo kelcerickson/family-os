@@ -2271,7 +2271,6 @@ function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
   );
 }
 
-}
 
 // ── Root App ──────────────────────────────────────────────────────────────────
 function AppInner() {
