@@ -1,4 +1,4 @@
-/* Override ALL Vite defaults */
+/* ── Reset Vite defaults ── */
 #root {
   max-width: 100% !important;
   width: 100% !important;
@@ -16,26 +16,49 @@ html, body {
 
 *, *::before, *::after {
   box-sizing: border-box !important;
+}
+
+/* ── Touch: prevent text selection, enable scroll ── */
+* {
   -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
 }
 
-/* CRITICAL: Enable touch scrolling on ALL overflow containers */
-div {
-  -webkit-overflow-scrolling: touch;
+body {
+  /* Prevent text selection globally - this stops the highlight issue */
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  /* Enable touch pan */
+  touch-action: pan-y;
 }
 
-/* Scrollable divs must have touch-action pan */  
-[style*="overflow-y: scroll"],
-[style*="overflow-y:scroll"],
-[style*="overflow-y: auto"],
-[style*="overflow-y:auto"] {
+/* Allow text selection only in inputs and textareas */
+input, textarea, [contenteditable] {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+/* ── Touch scrolling on all scroll containers ── */
+div[style*="overflow-y"] {
   -webkit-overflow-scrolling: touch !important;
-  touch-action: pan-y !important;
-  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
 }
 
-/* Hide scrollbars but keep scroll functional */
-::-webkit-scrollbar { width: 4px; height: 4px; }
+/* ── Emoji rendering fix ── */
+/* Force system emoji font for all emoji characters */
+.emoji, [data-emoji] {
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif !important;
+}
+
+/* Ensure emojis render in color on all platforms */
+body {
+  font-family: 'Fredoka', 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
+}
+
+/* ── Scrollbar styling ── */
+::-webkit-scrollbar { width: 3px; height: 3px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
 * { scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.12) transparent; }
