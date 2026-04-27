@@ -58,7 +58,7 @@ const SB = {
 
   // Tasks (template tasks per member/section)
   getTasks:    () => sb("tasks", "GET", null, "?order=sort_order"),
-  addTask:     (memberId, section, label, recurrence="daily", dows=[1,2,3,4,5], specificDate=null) => sb("tasks", "POST", { member_id: memberId, section, label, recurrence, dows, specific_date: specificDate||null }),
+  addTask:     (memberId, section, label, recurrence="daily", dows=[1,2,3,4,5], specificDate=null, bonusPoints=0) => sb("tasks", "POST", { member_id: memberId, section, label, recurrence, dows, specific_date: specificDate||null, bonus_points: bonusPoints||0 }),
   deleteTask:  (id) => sb(`tasks?id=eq.${id}`, "DELETE"),
 
   // Task completions
@@ -106,9 +106,9 @@ function dbTasksToApp(rows) {
     if (result[r.member_id][r.section]) result[r.member_id][r.section].push({
       id: r.id, label: r.label, done: false,
       recurrence: r.recurrence || "daily",
-      // Only set dows for weekly tasks; daily tasks show every day
       dows: (r.recurrence === "weekly" && r.dows) ? r.dows : null,
       specificDate: r.specific_date || null,
+      bonusPoints: r.bonus_points || 0,
     });
   });
   return result;
@@ -164,7 +164,12 @@ const SECTIONS = [
   { id:"exercise",   label:"Exercise",   icon:"💪", color:"#6BCB77", light:"#E5F7E8", grad:"linear-gradient(135deg,#6BCB77,#8FD98A)" },
   { id:"contribute", label:"Contribute", icon:"🤝", color:"#FF9F45", light:"#FFF0E0", grad:"linear-gradient(135deg,#FF9F45,#FFB86C)" },
   { id:"goals",      label:"Goals",      icon:"🎯", color:"#C77DFF", light:"#F3E5FF", grad:"linear-gradient(135deg,#C77DFF,#D99FFF)" },
+  { id:"bonus",      label:"Bonus",      icon:"⭐", color:"#FFD700", light:"#FFFBE6", grad:"linear-gradient(135deg,#FFD700,#FFE97A)" },
+  { id:"open",       label:"Open Tasks", icon:"📋", color:"#6B8CFF", light:"#E8ECFF", grad:"linear-gradient(135deg,#6B8CFF,#8DA3FF)" },
 ];
+
+// Sections that count toward Rainbow Day (not bonus/open)
+const CORE_SECTIONS = ["learn","exercise","contribute","goals"];
 
 // Quadrant colors matching the image: blue top-left, orange top-right, pink/red bottom-left, green bottom-right
 const QUAD = [
@@ -175,7 +180,7 @@ const QUAD = [
 ];
 
 const EMPTY_MEMBER_TASKS = () => ({
-  learn: [], exercise: [], contribute: [], goals: []
+  learn: [], exercise: [], contribute: [], goals: [], bonus: [], open: []
 });
 const INIT_TASKS = {
   dad:   EMPTY_MEMBER_TASKS(),
@@ -653,7 +658,7 @@ function CalendarPage({ family, events }) {
 // PAGE 2 — TODAY
 // ════════════════════════════════════════════════════════════════════════════
 function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowDay, viewDate }) {
-  const isRainbow = SECTIONS.every(sec => {
+  const isRainbow = CORE_SECTIONS.every(sec => {
     const items = tasks[sec.id] || [];
     return items.length === 0 || items.every(t => !!(completions && completions[t.label + "|" + member.id]));
   });
@@ -694,14 +699,16 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
       </div>
       <div style={{ flex:1, overflowY:"scroll", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
         {SECTIONS.map(sec => {
+          const isBonus = sec.id === "bonus";
+          const isOpen  = sec.id === "open";
           const secTasks = tasks[sec.id] || [];
-          // Merge completion state from Supabase into each task
+          if (secTasks.length === 0 && (isBonus || isOpen)) return null; // hide empty bonus/open
           const secTasksWithDone = secTasks.map(t => ({
             ...t,
             done: !!(completions && completions[t.label + "|" + member.id])
           }));
           const doneCnt = secTasksWithDone.filter(t => t.done).length;
-          const done = secTasksWithDone.length > 0 && secTasksWithDone.every(t => t.done);
+          const done = !isBonus && !isOpen && secTasksWithDone.length > 0 && secTasksWithDone.every(t => t.done);
           return (
             <div key={sec.id} style={{ marginBottom:10 }}>
               <div style={{ borderRadius:"12px 12px 0 0", padding:"8px 10px 6px", background: done?sec.grad:T.white, border:`2px solid ${done?"transparent":T.border}`, borderBottom:"none", display:"flex", alignItems:"center", gap:7 }}>
@@ -725,6 +732,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
                       {task.done && <span style={{ color:"#fff", fontSize:11 }}>✓</span>}
                     </div>
                     <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600, color: task.done?sec.color:T.text, textDecoration: task.done?"line-through":"none", lineHeight:1.35 }}>{task.label}</span>
+                    {task.bonusPoints > 0 && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:"#92700A", background:"#FFFBE6", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>+{task.bonusPoints}pt</span>}
                   </div>
                 ))}
                 {!done && <div style={{ textAlign:"center", marginTop:6, fontFamily:"'Nunito',sans-serif", fontSize:10, color:T.muted }}>Complete all to earn <span style={{ fontWeight:800, color:sec.color }}>+1 pt</span></div>}
@@ -849,8 +857,12 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay }) {
               exercise:   filterByDate(dbMemberTasks.exercise || []),
               goals:      filterByDate(dbMemberTasks.goals || []),
               contribute: choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute || []),
+              // Bonus: filter by date like normal tasks
+              bonus:      filterByDate(dbMemberTasks.bonus || []),
+              // Open tasks: always show all (no date filter - they persist until done)
+              open:       (dbMemberTasks.open || []),
             };
-            const memberPts = SECTIONS.filter(s => {
+            const memberPts = CORE_SECTIONS.filter(s => {
               const items = mergedTasks[s.id] || [];
               return items.length > 0 && items.every(t => !!(completions && completions[t.label + "|" + m.id]));
             }).length;
@@ -1886,15 +1898,21 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
   const [activeMember, setActiveMember] = useState(family[0]);
   const [activeSection, setActiveSection] = useState("learn");
   const [showForm, setShowForm] = useState(false);
+  const DOW_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+  // Task sections in Admin (all except contribute which is in Chores)
   const TASK_SECTIONS = SECTIONS.filter(s => s.id !== "contribute");
   const sec = TASK_SECTIONS.find(s => s.id===activeSection) || TASK_SECTIONS[0];
   const currentTasks = tasks[activeMember.id]?.[sec.id] || [];
-  const DOW_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-  const EMPTY_FORM = { label:"", recurrence:"daily", dows:[1,2,3,4,5], specificDate:"" };
+  const EMPTY_FORM = { label:"", recurrence:"daily", dows:[1,2,3,4,5], specificDate:"", bonusPoints:1, assignedTo:"all" };
   const [form, setForm] = useState(EMPTY_FORM);
 
+  const isBonus = activeSection === "bonus";
+  const isOpen  = activeSection === "open";
+
   function taskRecurrenceLabel(task) {
+    if (isOpen) return "Always visible";
     if (!task.recurrence || task.recurrence === "daily") return "Every day";
     if (task.recurrence === "weekly") {
       const days = (task.dows||[]).map(i=>DOW_LABELS[i]).join(", ");
@@ -1904,23 +1922,27 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
     return task.recurrence;
   }
 
-  function taskMatchesDate(task, date) {
-    if (!task.recurrence || task.recurrence === "daily") return true;
-    if (task.recurrence === "weekly") return (task.dows||[]).includes(date.getDay());
-    if (task.recurrence === "once" && task.specificDate) {
-      return new Date(task.specificDate+"T00:00:00").toDateString() === date.toDateString();
-    }
-    return true;
-  }
-
   async function addTask() {
     if (!form.label.trim()) return;
-    if (form.recurrence === "once" && !form.specificDate) return;
-    if (form.recurrence === "weekly" && form.dows.length === 0) return;
-    const rows = await SB.addTask(activeMember.id, sec.id, form.label.trim(), form.recurrence, form.dows, form.specificDate);
-    if (rows && rows[0]) {
-      const newT = { id: rows[0].id, label: rows[0].label, done: false, recurrence: rows[0].recurrence, dows: rows[0].dows, specificDate: rows[0].specific_date };
-      setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: [...(prev[activeMember.id]?.[sec.id]||[]), newT] } }));
+    if (!isOpen && form.recurrence === "once" && !form.specificDate) return;
+    if (!isOpen && form.recurrence === "weekly" && form.dows.length === 0) return;
+
+    const recurrence = isOpen ? "daily" : form.recurrence;
+    const dows = isOpen ? [0,1,2,3,4,5,6] : form.dows;
+    const specificDate = isOpen ? null : form.specificDate;
+    const bonusPoints = isBonus ? (form.bonusPoints || 1) : 0;
+
+    // For bonus tasks assigned to a specific person
+    const membersToAssign = (isBonus && form.assignedTo !== "all")
+      ? [family.find(m => m.id === form.assignedTo)].filter(Boolean)
+      : [activeMember];
+
+    for (const member of membersToAssign) {
+      const rows = await SB.addTask(member.id, sec.id, form.label.trim(), recurrence, dows, specificDate, bonusPoints);
+      if (rows && rows[0]) {
+        const newT = { id: rows[0].id, label: rows[0].label, done: false, recurrence: rows[0].recurrence, dows: rows[0].dows, specificDate: rows[0].specific_date, bonusPoints };
+        setTasks(prev => ({ ...prev, [member.id]: { ...prev[member.id], [sec.id]: [...(prev[member.id]?.[sec.id]||[]), newT] } }));
+      }
     }
     setForm(EMPTY_FORM);
     setShowForm(false);
@@ -1930,7 +1952,7 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
     <div>
       <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>⚡ Task Setup</h2>
       <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>
-        Add Learn, Exercise, and Goals tasks per person. For chores, use the 🧹 Chores tab.
+        Set up tasks per person. For chores use the 🧹 Chores tab.
       </p>
 
       {/* Member selector */}
@@ -1943,30 +1965,49 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
         ))}
       </div>
 
-      {/* Section selector */}
-      <div style={{ display:"flex", gap:6, marginBottom:16 }}>
+      {/* Section tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
         {TASK_SECTIONS.map(s => (
-          <button key={s.id} onClick={() => setActiveSection(s.id)} style={{ flex:1, padding:"10px 8px", borderRadius:12, border:"none", cursor:"pointer", background: sec.id===s.id?s.color:T.stone, color: sec.id===s.id?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>
+          <button key={s.id} onClick={() => { setActiveSection(s.id); setShowForm(false); }} style={{ padding:"9px 14px", borderRadius:12, border:"none", cursor:"pointer", background: sec.id===s.id?s.color:T.stone, color: sec.id===s.id?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>
             {s.icon} {s.label}
           </button>
         ))}
       </div>
 
+      {/* Section description */}
+      {isBonus && (
+        <div style={{ background:"#FFFBE6", border:"1.5px solid #FFD70044", borderRadius:12, padding:"10px 14px", marginBottom:14 }}>
+          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:"#92700A" }}>
+            ⭐ <strong>Bonus tasks</strong> earn extra points. Assign to a specific person or everyone, set a point value, and schedule them.
+          </div>
+        </div>
+      )}
+      {isOpen && (
+        <div style={{ background:"#E8ECFF", border:"1.5px solid #6B8CFF44", borderRadius:12, padding:"10px 14px", marginBottom:14 }}>
+          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:"#3040A0" }}>
+            📋 <strong>Open tasks</strong> show up every day until completed. Use for ongoing projects or standing to-dos.
+          </div>
+        </div>
+      )}
+
       {/* Task list */}
       <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px", marginBottom:14 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
           <div style={{ fontSize:16, fontWeight:700, color:T.text }}>{activeMember.name}'s {sec.label} Tasks</div>
-          <button onClick={() => setShowForm(!showForm)} style={{ background:sec.color, color:"#fff", border:"none", borderRadius:10, padding:"7px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, cursor:"pointer" }}>+ Add Task</button>
+          <button onClick={() => setShowForm(!showForm)} style={{ background:sec.color, color:"#fff", border:"none", borderRadius:10, padding:"7px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, cursor:"pointer" }}>+ Add</button>
         </div>
         {currentTasks.length===0
-          ? <div style={{ textAlign:"center", padding:"16px 0", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No tasks yet — add one above</div>
+          ? <div style={{ textAlign:"center", padding:"16px 0", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No tasks yet</div>
           : currentTasks.map(task => (
             <div key={task.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:6 }}>
               <div style={{ flex:1 }}>
                 <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{task.label}</div>
-                <div style={{ fontSize:11, color:T.muted, marginTop:2, fontFamily:"'Nunito',sans-serif" }}>{taskRecurrenceLabel(task)}</div>
+                <div style={{ fontSize:11, color:T.muted, marginTop:2, fontFamily:"'Nunito',sans-serif", display:"flex", gap:8 }}>
+                  <span>{taskRecurrenceLabel(task)}</span>
+                  {task.bonusPoints > 0 && <span style={{ color:"#92700A", fontWeight:700 }}>+{task.bonusPoints} pts</span>}
+                </div>
               </div>
-              <button onClick={async () => { await SB.deleteTask(task.id); setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: prev[activeMember.id][sec.id].filter(t=>t.id!==task.id) } })); }} style={{ padding:"5px 10px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>✕</button>
+              <button onClick={async () => { await SB.deleteTask(task.id); setTasks(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [sec.id]: prev[activeMember.id][sec.id].filter(t=>t.id!==task.id) } })); }} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer" }}>×</button>
             </div>
           ))
         }
@@ -1974,68 +2015,69 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
 
       {/* Add task form */}
       {showForm && (
-        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px", marginBottom:14 }}>
+        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${sec.color}44`, padding:"18px", marginBottom:14 }}>
           <h3 style={{ fontSize:16, fontWeight:700, color:T.text, margin:"0 0 14px" }}>New {sec.label} Task</h3>
 
           {/* Label */}
           <div style={{ marginBottom:12 }}>
             <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Task Description</label>
             <input value={form.label} onChange={e=>setForm(f=>({...f,label:e.target.value}))}
-              placeholder={`e.g. ${sec.id==="learn"?"Read 30 minutes":sec.id==="exercise"?"20 min run":"Write in journal"}`}
+              placeholder={isBonus?"e.g. Babysitting for 2 hours":isOpen?"e.g. Clean out garage":"e.g. Read 30 minutes"}
               style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
           </div>
 
-          {/* Recurrence */}
-          <div style={{ marginBottom:12 }}>
-            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Repeats</label>
-            <div style={{ display:"flex", gap:6 }}>
-              {[{id:"once",label:"One-time"},{id:"daily",label:"Daily"},{id:"weekly",label:"Weekly"}].map(r => (
-                <button key={r.id} onClick={() => setForm(f=>({...f,recurrence:r.id}))} style={{
-                  flex:1, padding:"9px 4px", borderRadius:10, border:"none", cursor:"pointer",
-                  background: form.recurrence===r.id ? T.text : T.stone,
-                  color: form.recurrence===r.id ? "#fff" : T.sub,
-                  fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
-                }}>{r.label}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* Day picker for weekly */}
-          {form.recurrence === "weekly" && (
-            <div style={{ marginBottom:12 }}>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>
-                Days of Week <span style={{ fontWeight:400, color:T.muted }}>— tap to select multiple</span>
-              </label>
-              <div style={{ display:"flex", gap:5 }}>
-                {DOW_LABELS.map((d,i) => {
-                  const on = form.dows.includes(i);
-                  return (
-                    <button key={i} onClick={() => setForm(f => ({ ...f, dows: on?f.dows.filter(x=>x!==i):[...f.dows,i].sort() }))}
-                      style={{ flex:1, padding:"8px 2px", borderRadius:9, border:`2px solid ${on?sec.color:"transparent"}`, cursor:"pointer", background: on?sec.color:T.stone, color: on?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700 }}>
-                      {d}
-                    </button>
-                  );
-                })}
+          {/* Bonus: point value + assignee */}
+          {isBonus && (
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+              <div>
+                <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Point Value</label>
+                <input type="number" min="1" max="20" value={form.bonusPoints} onChange={e=>setForm(f=>({...f,bonusPoints:+e.target.value}))}
+                  style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
               </div>
-              {form.dows.length > 0 && (
-                <div style={{ fontSize:11, color:T.muted, fontFamily:"'Nunito',sans-serif", marginTop:5 }}>
-                  Selected: {form.dows.map(i=>["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][i]).join(", ")}
-                </div>
-              )}
+              <div>
+                <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Assign To</label>
+                <select value={form.assignedTo} onChange={e=>setForm(f=>({...f,assignedTo:e.target.value}))}
+                  style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }}>
+                  <option value="all">Current member ({activeMember.name})</option>
+                  {family.map(m => <option key={m.id} value={m.id}>{m.emoji} {m.name}</option>)}
+                </select>
+              </div>
             </div>
           )}
 
-          {/* Specific date for one-time */}
-          {form.recurrence === "once" && (
-            <div style={{ marginBottom:12 }}>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Date</label>
-              <input type="date" value={form.specificDate} onChange={e=>setForm(f=>({...f,specificDate:e.target.value}))}
-                style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
-            </div>
+          {/* Recurrence (not for open tasks) */}
+          {!isOpen && (
+            <>
+              <div style={{ marginBottom:12 }}>
+                <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Repeats</label>
+                <div style={{ display:"flex", gap:6 }}>
+                  {[{id:"once",label:"One-time"},{id:"daily",label:"Daily"},{id:"weekly",label:"Weekly"}].map(r => (
+                    <button key={r.id} onClick={() => setForm(f=>({...f,recurrence:r.id}))} style={{ flex:1, padding:"9px 4px", borderRadius:10, border:"none", cursor:"pointer", background:form.recurrence===r.id?T.text:T.stone, color:form.recurrence===r.id?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>{r.label}</button>
+                  ))}
+                </div>
+              </div>
+              {form.recurrence === "weekly" && (
+                <div style={{ marginBottom:12 }}>
+                  <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Days of Week</label>
+                  <div style={{ display:"flex", gap:5 }}>
+                    {DOW_LABELS.map((d,i) => {
+                      const on = form.dows.includes(i);
+                      return <button key={i} onClick={() => setForm(f=>({...f,dows:on?f.dows.filter(x=>x!==i):[...f.dows,i].sort()}))} style={{ flex:1, padding:"8px 2px", borderRadius:9, border:`2px solid ${on?sec.color:"transparent"}`, cursor:"pointer", background:on?sec.color:T.stone, color:on?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700 }}>{d}</button>;
+                    })}
+                  </div>
+                </div>
+              )}
+              {form.recurrence === "once" && (
+                <div style={{ marginBottom:12 }}>
+                  <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Date</label>
+                  <input type="date" value={form.specificDate} onChange={e=>setForm(f=>({...f,specificDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+                </div>
+              )}
+            </>
           )}
 
           <div style={{ display:"flex", gap:10 }}>
-            <button onClick={addTask} style={{ flex:1, padding:"12px", borderRadius:12, background:sec.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>Add Task</button>
+            <button onClick={addTask} style={{ flex:1, padding:"12px", borderRadius:12, background:sec.color, color:sec.id==="bonus"?"#333":"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>Add Task</button>
             <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, cursor:"pointer" }}>Cancel</button>
           </div>
         </div>
@@ -2044,244 +2086,4 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
   );
 }
 
-function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
-  const [activeMember, setActiveMember] = useState(family[2]||family[0]);
-  const [activeQuad, setActiveQuad] = useState("spiritual");
-  const [newGoal, setNewGoal] = useState("");
-  const quad = QUAD.find(q=>q.id===activeQuad);
-  const currentGoals = goals[activeMember.id]?.[activeQuad] || [];
 
-  async function addGoal() {
-    if (!newGoal.trim()) return;
-    await SB.addGoal(activeMember.id, activeQuad, newGoal.trim());
-    setGoals(prev => ({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [activeQuad]: [...(prev[activeMember.id]?.[activeQuad]||[]), newGoal.trim()] } }));
-    setNewGoal("");
-  }
-
-  return (
-    <div>
-      <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>Goal Setup</h2>
-      <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>Set goals for each person across the four growth quadrants. These appear on the Progress page.</p>
-      <div style={{ display:"flex", gap:8, marginBottom:16, overflowX:"auto" }}>
-        {family.map(m => <button key={m.id} onClick={() => setActiveMember(m)} style={{ display:"flex", alignItems:"center", gap:6, padding:"8px 16px", borderRadius:99, flexShrink:0, cursor:"pointer", background: activeMember.id===m.id?m.color:T.stone, border: activeMember.id===m.id?`2px solid ${m.color}`:"2px solid transparent" }}><span style={{fontSize:15}}>{m.emoji}</span><span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, color: activeMember.id===m.id?"#fff":T.sub }}>{m.name}</span></button>)}
-      </div>
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:16 }}>
-        {QUAD.map(q => {
-          const qGoals = goals[activeMember.id]?.[q.id]||[];
-          const active = q.id===activeQuad;
-          return (
-            <button key={q.id} onClick={() => setActiveQuad(q.id)} style={{ padding:"14px", borderRadius:14, border:`2px solid ${active?q.color:T.border}`, background: active?q.color+"22":T.white, cursor:"pointer", textAlign:"left" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:7, marginBottom:4 }}>
-                <span style={{fontSize:16}}>{q.icon}</span>
-                <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:q.color }}>{q.label}</span>
-                <span style={{ marginLeft:"auto", fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>{qGoals.length}</span>
-              </div>
-              {qGoals.slice(0,2).map((g,i) => <div key={i} style={{ fontSize:11, color:T.sub, fontFamily:"'Nunito',sans-serif", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis", marginBottom:2 }}>· {g}</div>)}
-            </button>
-          );
-        })}
-      </div>
-      <div style={{ background:T.white, borderRadius:16, border:`2px solid ${quad.color}55`, borderTop:`3px solid ${quad.color}`, padding:"16px 18px", marginBottom:12 }}>
-        <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
-          <span style={{fontSize:18}}>{quad.icon}</span>
-          <span style={{ fontSize:16, fontWeight:700, color:quad.color }}>{activeMember.name}'s {quad.label} Goals</span>
-        </div>
-        {currentGoals.length===0 ? <div style={{ textAlign:"center", padding:"16px 0", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No goals yet</div> : currentGoals.map((g,i) => (
-          <div key={i} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:10, background:"#F8F7F4", border:`1px solid ${T.border}`, marginBottom:6 }}>
-            <div style={{ width:8, height:8, borderRadius:"50%", background:quad.color, flexShrink:0 }} />
-            <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text }}>{g}</span>
-            <button onClick={async () => {
-                const row = (dbGoalRows||[]).find(r => r.member_id===activeMember.id && r.quadrant===activeQuad && r.label===g);
-                if (row) await SB.deleteGoal(row.id);
-                setGoals(prev=>({ ...prev, [activeMember.id]: { ...prev[activeMember.id], [activeQuad]: prev[activeMember.id][activeQuad].filter((_,idx)=>idx!==i) } }));
-              }} style={{ padding:"5px 10px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>✕</button>
-          </div>
-        ))}
-      </div>
-      <div style={{ display:"flex", gap:10 }}>
-        <input value={newGoal} onChange={e=>setNewGoal(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addGoal()} placeholder={`Add a ${quad.label.toLowerCase()} goal for ${activeMember.name}…`} style={{ flex:1, padding:"12px 16px", borderRadius:12, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14 }} />
-        <button onClick={addGoal} style={{ padding:"12px 20px", borderRadius:12, background:quad.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>Add</button>
-      </div>
-    </div>
-  );
-}
-
-// ════════════════════════════════════════════════════════════════════════════
-// ROOT
-// ════════════════════════════════════════════════════════════════════════════
-function AppInner() {
-  const [page, setPage]   = useState("today");
-  const [family]          = useState(FAMILY_INIT);
-  const [adminMode, setAdminMode] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [screensaver, setScreensaver] = useState(false);
-  const inactivityTimer = useState(null);
-
-  // Supabase-backed state
-  const [events,           setEvents]           = useState([]);
-  const [choreAssignments, setChoreAssignments] = useState({});
-  const [tasks,            setTasks]            = useState(INIT_TASKS);
-  const [goals,            setGoals]            = useState(INIT_GOALS);
-  const [streaks,          setStreaks]           = useState(INIT_STREAKS);
-  const [weekPts,          setWeekPts]          = useState(INIT_WEEK_PTS);
-  const [rainbowDays,      setRainbowDays]       = useState([]);
-  const [allCompletions,   setAllCompletions]    = useState([]);
-  const [dbTaskRows,       setDbTaskRows]        = useState([]);
-  const [dbGoalRows,       setDbGoalRows]        = useState([]);
-
-  // Load all data from Supabase on mount
-  async function loadAll() {
-    setLoading(true);
-    try {
-      const evRows = await SB.getEvents().catch(() => []);
-      const choreRows = await SB.getChores().catch(() => []);
-      const taskRows = await SB.getTasks().catch(() => []);
-      const goalRows = await SB.getGoals().catch(() => []);
-      const manualEvents = dbEventsToApp(evRows || []);
-
-      // Fetch Google Calendar events for all connected members
-      const gcalEvents = [];
-      for (const member of FAMILY_INIT) {
-        try {
-          const res = await fetch(`/api/calendar/events?memberId=${member.id}`);
-          if (res.status === 200) {
-            const text = await res.text();
-            try {
-              const data = JSON.parse(text);
-              console.log(`📅 ${member.id}: ${data.events?.length || 0} events from`, data.calendarsFound?.join(', '));
-              if (data.events && data.events.length > 0) gcalEvents.push(...data.events);
-            } catch(parseErr) {
-              console.warn(`⚠️ ${member.id} JSON parse failed:`, text.slice(0,100));
-            }
-          } else if (res.status !== 404) {
-            console.warn(`⚠️ ${member.id} returned ${res.status}`);
-          }
-        } catch(e) {
-          console.warn(`⚠️ ${member.id} fetch error:`, e.message);
-        }
-      }
-      console.log(`📅 Total Google Calendar events loaded: ${gcalEvents.length}`);
-
-      // Merge manual + Google Calendar events
-      setEvents([...manualEvents, ...gcalEvents]);
-      const rdRows = await SB.getRainbowDays().catch(() => []);
-      setRainbowDays(rdRows || []);
-      // Fetch last 60 days of completions for badge calculation
-      const allCompRows = await sb("task_completions", "GET", null,
-        `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
-      ).catch(() => []);
-      setAllCompletions(allCompRows || []);
-      setChoreAssignments(dbChoresToApp(choreRows || []));
-      setDbTaskRows(taskRows || []);
-      setTasks(dbTasksToApp(taskRows || []));
-      setDbGoalRows(goalRows || []);
-      setGoals(dbGoalsToApp(goalRows || []));
-    } catch(e) {
-      console.error("Load error:", e);
-    }
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    const link = document.createElement("link");
-    link.href = FONT_URL; link.rel = "stylesheet";
-    document.head.appendChild(link);
-    const style = document.createElement("style");
-    style.textContent = `
-      *, *::before, *::after { box-sizing: border-box; }
-      html, body, #root { margin: 0 !important; padding: 0 !important; width: 100% !important; overflow-x: hidden; }
-      * { -webkit-overflow-scrolling: touch; }
-      ::-webkit-scrollbar { display: none !important; }
-      * { scrollbar-width: none !important; -ms-overflow-style: none !important; }
-      html, body { touch-action: manipulation; }
-      .scroll-col { touch-action: pan-y !important; user-select: none !important; -webkit-user-select: none !important; overflow-y: auto !important; }
-      .scroll-col * { user-select: none !important; -webkit-user-select: none !important; pointer-events: auto; }
-    `;
-    document.head.appendChild(style);
-    document.body.style.margin = "0";
-    document.body.style.padding = "0";
-    document.body.style.width = "100vw";
-    document.documentElement.style.margin = "0";
-    document.documentElement.style.padding = "0";
-    document.body.style.background = T.bg;
-    document.body.style.overscrollBehavior = "none";
-
-    // Override any Vite default styles on #root
-    const rootEl = document.getElementById('root');
-    if (rootEl) {
-      rootEl.style.cssText = 'max-width:100% !important; width:100% !important; margin:0 !important; padding:0 !important;';
-    }
-    // Inject global styles for touch scrolling and #root override
-    const overrideStyle = document.createElement('style');
-    overrideStyle.textContent = `
-      #root { max-width:100% !important; width:100% !important; margin:0 !important; padding:0 !important; }
-      * { -webkit-overflow-scrolling: touch; }
-      .scroll-y { overflow-y: auto !important; -webkit-overflow-scrolling: touch !important; touch-action: pan-y !important; }
-    `;
-    document.head.appendChild(overrideStyle);
-
-    loadAll();
-
-    // Screensaver inactivity timer
-    let timer = null;
-    function resetTimer() {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => setScreensaver(true), SCREENSAVER_TIMEOUT_MS);
-    }
-    function onActivity() {
-      setScreensaver(false);
-      resetTimer();
-    }
-    const events = ["mousedown","mousemove","keypress","touchstart","click","scroll"];
-    events.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
-    resetTimer();
-
-    const check = () => {
-      const hash = window.location.hash;
-      setAdminMode(hash.startsWith("#admin"));
-      // If returning from Google OAuth, reload all data
-      if (hash.includes("calendar_connected=true")) {
-        loadAll();
-      }
-    };
-    check();
-    window.addEventListener("hashchange", check);
-    return () => {
-      window.removeEventListener("hashchange", check);
-      events.forEach(e => window.removeEventListener(e, onActivity));
-      if (timer) clearTimeout(timer);
-    };
-  }, []);
-
-  // Screensaver overlay — renders on top of everything
-  const screensaverEl = screensaver ? <Screensaver onDismiss={() => setScreensaver(false)} /> : null;
-
-  if (loading) return (
-    <>
-      {screensaverEl}
-      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100vh", background:T.bg, fontFamily:"'Fredoka',sans-serif", gap:16 }}>
-        <div style={{ fontSize:48 }}>🏡</div>
-        <div style={{ fontSize:20, fontWeight:700, color:T.text }}>Loading Family OS…</div>
-        <div style={{ fontSize:14, color:T.muted }}>Connecting to database</div>
-      </div>
-    </>
-  );
-
-  if (adminMode) return <AdminPage family={family} events={events} setEvents={setEvents} tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} dbTaskRows={dbTaskRows} dbGoalRows={dbGoalRows} onReload={loadAll} />;
-
-  const goAdmin = () => { window.location.hash = "#admin"; };
-
-  return (
-    <div style={{ background:T.bg, width:"100vw", minHeight:"100vh", overflowX:"hidden" }}>
-      <TopBar onAdmin={goAdmin} />
-      {page==="calendar" && <CalendarPage family={family} events={events} />}
-      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} onRainbowDay={(memberId, dateStr) => { SB.logRainbowDay(memberId, dateStr); SB.getRainbowDays().then(r => setRainbowDays(r||[])); }} />}
-      {page==="progress" && <ProgressPage family={family} goals={goals} setGoals={setGoals} streaks={streaks} weekPts={weekPts} rainbowDays={rainbowDays} allCompletions={allCompletions} tasks={tasks} dbGoalRows={dbGoalRows} />}
-      <BottomNav page={page} onPage={setPage} />
-    </div>
-  );
-}
-
-export default function App() {
-  return <ErrorBoundary><AppInner /></ErrorBoundary>;
-}
