@@ -2271,22 +2271,6 @@ function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
   );
 }
 
-// ── Error Boundary ────────────────────────────────────────────────────────────
-class ErrorBoundary extends Component {
-  state = { error: null };
-  static getDerivedStateFromError(e) { return { error: e }; }
-  render() {
-    if (this.state.error) return (
-      <div style={{ padding:40, fontFamily:"sans-serif", background:"#fff1f0", minHeight:"100vh" }}>
-        <h2 style={{ color:"#c00" }}>⚠️ App Error</h2>
-        <pre style={{ fontSize:12, background:"#fff", padding:16, borderRadius:8, overflow:"auto" }}>
-          {this.state.error.toString()}
-        </pre>
-        <button onClick={() => window.location.reload()} style={{ marginTop:16, padding:"10px 20px", fontSize:16, cursor:"pointer" }}>Reload</button>
-      </div>
-    );
-    return this.props.children;
-  }
 }
 
 // ── Root App ──────────────────────────────────────────────────────────────────
