@@ -340,7 +340,14 @@ function sectionDone(tasks, secId) {
   const items = tasks[secId] || [];
   return items.length > 0 && items.every(t => t.done);
 }
-function allSectionsDone(tasks) { return SECTIONS.every(s => sectionDone(tasks, s.id)); }
+function allSectionsDone(tasks) {
+  const coreItems = CORE_SECTIONS.map(id => tasks[id] || []);
+  const hasAny = coreItems.some(items => items.length > 0);
+  return hasAny && CORE_SECTIONS.every(id => {
+    const items = tasks[id] || [];
+    return items.length === 0 || sectionDone(tasks, id);
+  });
+}
 
 function stripeStyle(colors) {
   if (colors.length < 2) return { background: colors[0] + "DD" };
@@ -658,10 +665,14 @@ function CalendarPage({ family, events }) {
 // PAGE 2 — TODAY
 // ════════════════════════════════════════════════════════════════════════════
 function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowDay, viewDate }) {
-  const isRainbow = CORE_SECTIONS.every(sec => {
+  // Rainbow only if: at least one core section has tasks AND all tasks in all core sections are done
+  const coreSectionTasks = CORE_SECTIONS.map(sec => tasks[sec.id] || []);
+  const hasAnyCoreTasks = coreSectionTasks.some(items => items.length > 0);
+  const allCoreTasksDone = CORE_SECTIONS.every(sec => {
     const items = tasks[sec.id] || [];
     return items.length === 0 || items.every(t => !!(completions && completions[t.label + "|" + member.id]));
   });
+  const isRainbow = hasAnyCoreTasks && allCoreTasksDone;
 
   // Fire rainbow day callback when all tasks complete
   const prevRainbow = useState(false);
