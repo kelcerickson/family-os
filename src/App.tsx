@@ -89,6 +89,12 @@ const SB = {
     { member_id: memberId, date },
     "?on_conflict=member_id,date"
   ),
+  // App settings (key/value store)
+  getSetting: (key) => sb("app_settings", "GET", null, `?key=eq.${key}`),
+  upsertSetting: (key, value) => sb("app_settings", "POST",
+    { key, value },
+    "?on_conflict=key"
+  ),
 };
 
 // Convert DB rows to app format
@@ -364,7 +370,7 @@ function stripeStyle(colors) {
 const FAMILY_PHOTO_URL = ""; // <-- paste your photo URL here
 const SCREENSAVER_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
-function Screensaver({ onDismiss }) {
+function Screensaver({ onDismiss, message }) {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
@@ -387,74 +393,77 @@ function Screensaver({ onDismiss }) {
         position: "fixed", inset: 0, zIndex: 9999,
         background: "#000",
         display: "flex", flexDirection: "column",
-        alignItems: "center", justifyContent: "center",
-        cursor: "pointer",
-        userSelect: "none",
+        alignItems: "center", justifyContent: "space-between",
+        cursor: "pointer", userSelect: "none",
+        padding: "60px 40px 50px",
       }}
     >
-      {/* Family photo */}
+      {/* Background */}
       {FAMILY_PHOTO_URL ? (
         <div style={{
           position: "absolute", inset: 0,
           backgroundImage: `url(${FAMILY_PHOTO_URL})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          filter: "brightness(0.6)",
+          backgroundSize: "cover", backgroundPosition: "center",
+          filter: "brightness(0.45)",
         }} />
       ) : (
-        <div style={{
-          position: "absolute", inset: 0,
-          background: "linear-gradient(135deg, #1A2F4B 0%, #0F1E30 50%, #1A2F4B 100%)",
-        }}>
-          {/* Star field */}
-          {Array.from({length: 40}).map((_, i) => (
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(160deg, #0F1E30 0%, #1A2F4B 100%)" }}>
+          {Array.from({length: 50}).map((_, i) => (
             <div key={i} style={{
               position: "absolute",
               top: `${Math.sin(i * 37.5) * 50 + 50}%`,
               left: `${Math.sin(i * 23.7) * 50 + 50}%`,
-              width: i % 5 === 0 ? 3 : 1.5,
-              height: i % 5 === 0 ? 3 : 1.5,
-              background: "#fff",
-              borderRadius: "50%",
-              opacity: 0.3 + (i % 4) * 0.15,
+              width: i % 5 === 0 ? 3 : 1.5, height: i % 5 === 0 ? 3 : 1.5,
+              background: "#fff", borderRadius: "50%",
+              opacity: 0.2 + (i % 4) * 0.12,
             }} />
           ))}
         </div>
       )}
 
-      {/* Content overlay */}
+      {/* TOP — Family name */}
       <div style={{ position: "relative", zIndex: 1, textAlign: "center" }}>
-        {/* Family name */}
         <div style={{
-          fontFamily: "'Fredoka',sans-serif", fontSize: 28, fontWeight: 600,
-          color: "rgba(255,255,255,0.7)", letterSpacing: 4, textTransform: "uppercase",
-          marginBottom: 16,
+          fontFamily: "'Fredoka',sans-serif", fontSize: 26, fontWeight: 600,
+          color: "rgba(255,255,255,0.65)", letterSpacing: 5, textTransform: "uppercase",
         }}>
-          🏡 The Erickson Family
+          The Erickson Family
         </div>
+      </div>
 
-        {/* Clock */}
+      {/* MIDDLE — Dynamic daily message */}
+      <div style={{ position: "relative", zIndex: 1, textAlign: "center", maxWidth: 800, padding: "0 20px" }}>
+        {message ? (
+          <div style={{
+            fontFamily: "'Fredoka',sans-serif", fontSize: 48, fontWeight: 600,
+            color: "#fff", lineHeight: 1.3,
+            textShadow: "0 2px 20px rgba(0,0,0,0.6)",
+          }}>
+            {message}
+          </div>
+        ) : (
+          <div style={{ height: 60 }} />
+        )}
+      </div>
+
+      {/* BOTTOM — Clock + Date + tap hint */}
+      <div style={{ position: "relative", zIndex: 1, textAlign: "center" }}>
         <div style={{
-          fontFamily: "'Playfair Display',serif", fontSize: 96, fontWeight: 700,
-          color: "#fff", lineHeight: 1, letterSpacing: -2,
+          fontFamily: "'Fredoka',sans-serif", fontSize: 80, fontWeight: 700,
+          color: "#fff", lineHeight: 1, letterSpacing: -1,
           textShadow: "0 4px 30px rgba(0,0,0,0.5)",
         }}>
           {timeStr}
         </div>
-
-        {/* Date */}
         <div style={{
           fontFamily: "'Fredoka',sans-serif", fontSize: 24, fontWeight: 500,
-          color: "rgba(255,255,255,0.75)", marginTop: 12, letterSpacing: 1,
+          color: "rgba(255,255,255,0.7)", marginTop: 8, letterSpacing: 1,
         }}>
           {dateStr}
         </div>
-
-        {/* Tap to wake */}
         <div style={{
-          marginTop: 48,
-          fontFamily: "'Nunito',sans-serif", fontSize: 14,
-          color: "rgba(255,255,255,0.35)", letterSpacing: 1,
+          marginTop: 24, fontFamily: "'Nunito',sans-serif", fontSize: 13,
+          color: "rgba(255,255,255,0.3)", letterSpacing: 1,
         }}>
           Tap anywhere to continue
         </div>
@@ -1385,7 +1394,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
 // ════════════════════════════════════════════════════════════════════════════
 // ADMIN PAGE
 // ════════════════════════════════════════════════════════════════════════════
-function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, dbTaskRows, dbGoalRows, onReload }) {
+function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, dbTaskRows, dbGoalRows, onReload, screensaverMsg, setScreensaverMsg }) {
   const [tab, setTab] = useState("calendar");
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
 
@@ -1423,6 +1432,35 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
       </div>
 
       <div style={{ padding:"24px 24px 100px", maxWidth:900, margin:"0 auto", overflowY:"scroll", minHeight:"calc(100vh - 140px)", WebkitOverflowScrolling:"touch", touchAction:"pan-y" }}>
+
+        {/* Screensaver Message */}
+        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px 20px", marginBottom:24 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12 }}>
+            <span style={{ fontSize:20 }}>🌙</span>
+            <div>
+              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text }}>Screensaver Message</div>
+              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted }}>This text appears on the screensaver when the screen is idle. Update it daily with a quote, goal, or message for the family.</div>
+            </div>
+          </div>
+          <div style={{ display:"flex", gap:10 }}>
+            <textarea
+              value={screensaverMsg}
+              onChange={e => setScreensaverMsg(e.target.value)}
+              placeholder="e.g. Today's focus: Be kind to each other. — or a scripture, quote, or daily goal"
+              rows={3}
+              style={{ flex:1, padding:"12px 14px", borderRadius:12, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:15, resize:"vertical", lineHeight:1.4 }}
+            />
+            <button
+              onClick={async () => {
+                await SB.upsertSetting("screensaver_msg", screensaverMsg);
+              }}
+              style={{ alignSelf:"flex-end", padding:"12px 20px", borderRadius:12, background:"#1A2F4B", color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
         {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
@@ -2298,6 +2336,7 @@ function AppInner() {
   const [streaks,          setStreaks]           = useState(INIT_STREAKS);
   const [weekPts,          setWeekPts]          = useState(INIT_WEEK_PTS);
   const [rainbowDays,      setRainbowDays]       = useState([]);
+  const [screensaverMsg,   setScreensaverMsg]    = useState("");
   const [allCompletions,   setAllCompletions]    = useState([]);
   const [dbTaskRows,       setDbTaskRows]        = useState([]);
   const [dbGoalRows,       setDbGoalRows]        = useState([]);
@@ -2342,6 +2381,8 @@ function AppInner() {
 
       const rdRows = await SB.getRainbowDays().catch(() => []);
       setRainbowDays(rdRows || []);
+      const msgRows = await SB.getSetting("screensaver_msg").catch(() => []);
+      if (msgRows && msgRows[0]) setScreensaverMsg(msgRows[0].value || "");
       const allCompRows = await sb("task_completions", "GET", null,
         `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
       ).catch(() => []);
@@ -2468,7 +2509,7 @@ function AppInner() {
 
   const goAdmin = () => { window.location.hash = "#admin"; };
 
-  const screensaverEl = screensaver ? <Screensaver onDismiss={() => setScreensaver(false)} /> : null;
+  const screensaverEl = screensaver ? <Screensaver onDismiss={() => setScreensaver(false)} message={screensaverMsg} /> : null;
 
   if (loading) return (
     <>
@@ -2486,6 +2527,7 @@ function AppInner() {
     tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals}
     choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments}
     dbTaskRows={dbTaskRows} dbGoalRows={dbGoalRows} onReload={loadAll}
+    screensaverMsg={screensaverMsg} setScreensaverMsg={setScreensaverMsg}
   />;
 
   return (
