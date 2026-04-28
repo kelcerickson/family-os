@@ -2360,6 +2360,79 @@ function AppInner() {
     overrideStyle.textContent = '#root{max-width:100%!important;width:100%!important;margin:0!important;padding:0!important;}';
     document.head.appendChild(overrideStyle);
 
+    // ── Touchscreen monitor scroll fix ──────────────────────────────────────
+    // Touchscreen monitors (non-mobile) send pointer events, not touch events.
+    // This handler intercepts pointer drags and converts them to scroll.
+    let pointerStartY = 0;
+    let pointerStartX = 0;
+    let scrollTarget = null;
+    let isPointerDown = false;
+    let lastPointerY = 0;
+    let velocity = 0;
+    let lastTime = 0;
+    let rafId = null;
+
+    function findScrollableParent(el) {
+      while (el && el !== document.body) {
+        const style = window.getComputedStyle(el);
+        const overflowY = style.overflowY;
+        if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+          return el;
+        }
+        el = el.parentElement;
+      }
+      return document.scrollingElement || document.documentElement;
+    }
+
+    function onPointerDown(e) {
+      if (e.pointerType === 'mouse' && e.buttons !== 1) return;
+      isPointerDown = true;
+      pointerStartY = e.clientY;
+      pointerStartX = e.clientX;
+      lastPointerY = e.clientY;
+      lastTime = performance.now();
+      velocity = 0;
+      scrollTarget = findScrollableParent(e.target);
+      if (rafId) cancelAnimationFrame(rafId);
+    }
+
+    function onPointerMove(e) {
+      if (!isPointerDown || !scrollTarget) return;
+      const now = performance.now();
+      const dt = now - lastTime;
+      const dy = lastPointerY - e.clientY;
+      const dx = pointerStartX - e.clientX;
+
+      // Only scroll if moving more vertically than horizontally
+      if (Math.abs(dy) < Math.abs(dx) * 0.5) return;
+
+      if (dt > 0) velocity = dy / dt;
+      lastPointerY = e.clientY;
+      lastTime = now;
+      scrollTarget.scrollTop += dy;
+      e.preventDefault();
+    }
+
+    function onPointerUp(e) {
+      if (!isPointerDown) return;
+      isPointerDown = false;
+
+      // Momentum scrolling
+      let vel = velocity * 16;
+      function momentum() {
+        if (!scrollTarget || Math.abs(vel) < 0.5) return;
+        scrollTarget.scrollTop += vel;
+        vel *= 0.92;
+        rafId = requestAnimationFrame(momentum);
+      }
+      rafId = requestAnimationFrame(momentum);
+    }
+
+    document.addEventListener('pointerdown', onPointerDown, { passive: false });
+    document.addEventListener('pointermove', onPointerMove, { passive: false });
+    document.addEventListener('pointerup', onPointerUp);
+    document.addEventListener('pointercancel', onPointerUp);
+
     loadAll();
 
     // Screensaver inactivity timer
@@ -2385,6 +2458,11 @@ function AppInner() {
       window.removeEventListener("hashchange", check);
       events.forEach(e => window.removeEventListener(e, onActivity));
       if (timer) clearTimeout(timer);
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('pointermove', onPointerMove);
+      document.removeEventListener('pointerup', onPointerUp);
+      document.removeEventListener('pointercancel', onPointerUp);
+      if (rafId) cancelAnimationFrame(rafId);
     };
   }, []);
 
