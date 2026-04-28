@@ -1450,14 +1450,28 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
               rows={3}
               style={{ flex:1, padding:"12px 14px", borderRadius:12, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:15, resize:"vertical", lineHeight:1.4 }}
             />
-            <button
-              onClick={async () => {
-                await SB.upsertSetting("screensaver_msg", screensaverMsg);
-              }}
-              style={{ alignSelf:"flex-end", padding:"12px 20px", borderRadius:12, background:"#1A2F4B", color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap" }}
-            >
-              Save
-            </button>
+{(() => {
+              const [saved, setSaved] = useState(false);
+              const [saving, setSaving] = useState(false);
+              return (
+                <button
+                  onClick={async () => {
+                    setSaving(true);
+                    try {
+                      await SB.upsertSetting("screensaver_msg", screensaverMsg);
+                      setSaved(true);
+                      setTimeout(() => setSaved(false), 3000);
+                    } catch(e) {
+                      alert("Error saving: " + e.message);
+                    }
+                    setSaving(false);
+                  }}
+                  style={{ alignSelf:"flex-end", padding:"12px 20px", borderRadius:12, background: saved ? "#2D7A56" : "#1A2F4B", color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap", transition:"background 0.3s", minWidth:80 }}
+                >
+                  {saving ? "Saving…" : saved ? "✓ Saved!" : "Save"}
+                </button>
+              );
+            })()}
           </div>
         </div>
 
