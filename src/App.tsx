@@ -52,7 +52,8 @@ const SB = {
   getChores:   () => sb("chore_assignments", "GET", null, "?order=chore_label"),
   upsertChore: (label, memberIds) => sb("chore_assignments", "POST",
     { chore_label: label, member_ids: memberIds },
-    "?on_conflict=chore_label"
+    "?on_conflict=chore_label",
+    "resolution=merge-duplicates,return=representation"
   ),
 
   // Tasks (template tasks per member/section)
@@ -64,7 +65,8 @@ const SB = {
   getCompletions: (date) => sb("task_completions", "GET", null, `?completed_date=eq.${date}`),
   addCompletion:  (label, memberId, date) => sb("task_completions", "POST",
     { task_label: label, member_id: memberId, completed_date: date },
-    "?on_conflict=task_label,member_id,completed_date"
+    "?on_conflict=task_label,member_id,completed_date",
+    "resolution=merge-duplicates,return=representation"
   ),
   deleteCompletion: (label, memberId, date) => sb(
     `task_completions?task_label=eq.${encodeURIComponent(label)}&member_id=eq.${memberId}&completed_date=eq.${date}`,
@@ -80,13 +82,15 @@ const SB = {
   getStreaks:  () => sb("streaks", "GET"),
   upsertStreak: (memberId, current, longest, lastDate) => sb("streaks", "POST",
     { member_id: memberId, current_streak: current, longest_streak: longest, last_rainbow_date: lastDate },
-    "?on_conflict=member_id"
+    "?on_conflict=member_id",
+    "resolution=merge-duplicates,return=representation"
   ),
   // Rainbow days log
   getRainbowDays: () => sb("rainbow_days", "GET", null, "?order=date.desc&limit=60"),
   logRainbowDay: (memberId, date) => sb("rainbow_days", "POST",
     { member_id: memberId, date },
-    "?on_conflict=member_id,date"
+    "?on_conflict=member_id,date",
+    "resolution=merge-duplicates,return=representation"
   ),
   // App settings (key/value store)
   getSetting: (key) => sb("app_settings", "GET", null, `?key=eq.${key}`),
@@ -268,6 +272,10 @@ function getChoresForDate(date, choreAssignments) {
   const day = date.getDate();
   const month = date.getMonth();
 
+  // Load custom chores from localStorage
+  let customChores = {};
+  try { customChores = JSON.parse(localStorage.getItem("familyos_customChores") || "{}"); } catch {}
+
   // Is it the 1st Thursday of the month?
   function isFirstThursday(d) {
     return d.getDay() === 4 && d.getDate() <= 7;
@@ -290,15 +298,19 @@ function getChoresForDate(date, choreAssignments) {
   // Always add daily-all chores
   DAILY_CHORES_ALL.forEach(c => allChores.push({ label:c, assignedTo:"all" }));
 
-  // Add weekly chores for this day
-  (WEEKLY_CHORES[dow] || []).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+  // Add weekly chores for this day (base + custom)
+  const weeklyBase = WEEKLY_CHORES[dow] || [];
+  const weeklyCustom = customChores[`weekly_${dow}`] || [];
+  [...weeklyBase, ...weeklyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
 
-  // Add daily-individual chores
-  DAILY_CHORES_INDIVIDUAL.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+  // Add daily-individual chores (base + custom)
+  const dailyCustom = customChores["daily_ind"] || [];
+  [...DAILY_CHORES_INDIVIDUAL, ...dailyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
 
-  // Monthly
+  // Monthly (base + custom)
   if (isFirstThursday(date)) {
-    MONTHLY_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly" }));
+    const monthlyCustom = customChores["monthly"] || [];
+    [...MONTHLY_CHORES, ...monthlyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly" }));
   }
 
   // Quarterly
