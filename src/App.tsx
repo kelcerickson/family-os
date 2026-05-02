@@ -23,15 +23,14 @@ class ErrorBoundary extends Component {
 const SUPABASE_URL = "https://mitzwognijayzgqvexcl.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1pdHp3b2duaWpheXpncXZleGNsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5NzczNTAsImV4cCI6MjA5MjU1MzM1MH0.ueMDxAzg8kyEK1f67d02I55OPSpL66zmOEGxwxrlZJc";
 
-async function sb(table, method="GET", body=null, query="") {
+async function sb(table, method="GET", body=null, query="", prefer="return=representation") {
   const url = `${SUPABASE_URL}/rest/v1/${table}${query}`;
   const headers = {
     "apikey": SUPABASE_KEY,
     "Authorization": `Bearer ${SUPABASE_KEY}`,
     "Content-Type": "application/json",
-    "Prefer": method === "POST" ? "return=representation" : "return=representation",
+    "Prefer": prefer,
   };
-  if (method === "PATCH" || method === "DELETE") headers["Prefer"] = "return=representation";
   const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : null });
   if (!res.ok) { console.error("Supabase error:", await res.text()); return null; }
   const text = await res.text();
@@ -58,7 +57,7 @@ const SB = {
 
   // Tasks (template tasks per member/section)
   getTasks:    () => sb("tasks", "GET", null, "?order=sort_order"),
-  addTask:     (memberId, section, label, recurrence="daily", dows=[1,2,3,4,5], specificDate=null, bonusPoints=0) => sb("tasks", "POST", { member_id: memberId, section, label, recurrence, dows, specific_date: specificDate||null, bonus_points: bonusPoints||0 }),
+  addTask:     (memberId, section, label, recurrence="daily", dows=[1,2,3,4,5], specificDate=null, bonusPoints=0) => sb("tasks", "POST", { member_id: memberId, section, label, recurrence, dows: dows||[], specific_date: specificDate||null, bonus_points: parseInt(bonusPoints)||0 }),
   deleteTask:  (id) => sb(`tasks?id=eq.${id}`, "DELETE"),
 
   // Task completions
@@ -91,10 +90,15 @@ const SB = {
   ),
   // App settings (key/value store)
   getSetting: (key) => sb("app_settings", "GET", null, `?key=eq.${key}`),
-  upsertSetting: (key, value) => sb("app_settings", "POST",
-    { key, value },
-    "?on_conflict=key"
-  ),
+  upsertSetting: async (key, value) => {
+    // Try PATCH first (update existing), then POST (insert new)
+    const existing = await sb("app_settings", "GET", null, `?key=eq.${key}`);
+    if (existing && existing.length > 0) {
+      return sb("app_settings", "PATCH", { value, updated_at: new Date().toISOString() }, `?key=eq.${key}`);
+    } else {
+      return sb("app_settings", "POST", { key, value }, "", "return=representation");
+    }
+  },
 };
 
 // Convert DB rows to app format
@@ -547,7 +551,7 @@ const INIT_CAL_EVENTS = [];
 function CalendarPage({ family, events }) {
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
   const [weekAnchor, setWeekAnchor] = useState(TODAY_DATE);
-  const [visibleIds, setVisibleIds] = useState(new Set(family.map(m => m.id)));
+  const [visibleIds, setVisibleIds] = useState(new Set(family.filter(m => m.defaultOn).map(m => m.id)));
   const weekDates = getWeekDates(weekAnchor);
   const todayStr = TODAY_DATE.toDateString();
   const calScrollRef = useState(null);
@@ -930,8 +934,7 @@ function ColorRing({ size = 100 }) {
   );
 }
 
-function GoalsQuadrant({ family, goals, setGoals, dbGoalRows }) {
-  const [activeMember, setActiveMember] = useState(family[0]);
+function GoalsQuadrant({ family, goals, setGoals, dbGoalRows, activeMember }) {
   const [completedGoals, setCompletedGoals] = useState([]); // { label, quadrant, memberId, date }
   const [celebration, setCelebration] = useState(null); // { label }
   const memberGoals = goals[activeMember.id] || {};
@@ -1032,23 +1035,6 @@ function GoalsQuadrant({ family, goals, setGoals, dbGoalRows }) {
           `}</style>
         </div>
       )}
-
-      {/* Member selector */}
-      <div style={{ display:"flex", gap:8, overflowX:"auto", marginBottom:16 }}>
-        {family.map(m => {
-          const active = m.id===activeMember.id;
-          return (
-            <button key={m.id} onClick={() => setActiveMember(m)} style={{
-              display:"flex", alignItems:"center", gap:6, padding:"7px 14px",
-              borderRadius:99, flexShrink:0, cursor:"pointer", transition:"all 0.15s",
-              background: active?m.color:T.stone, border: active?`2px solid ${m.color}`:"2px solid transparent",
-            }}>
-              <span style={{fontSize:15}}>{m.emoji}</span>
-              <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:active?"#fff":T.sub }}>{m.name}</span>
-            </button>
-          );
-        })}
-      </div>
 
       {/* Title */}
       <div style={{ textAlign:"center", marginBottom:14 }}>
@@ -1384,7 +1370,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
         </div>
 
         {/* Goals Quadrant — styled like the image */}
-        <GoalsQuadrant family={family} goals={goals} setGoals={setGoals} dbGoalRows={dbGoalRows} />
+        <GoalsQuadrant family={family} goals={goals} setGoals={setGoals} dbGoalRows={dbGoalRows} activeMember={activeMember} />
 
       </div>
     </div>
