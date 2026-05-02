@@ -1793,6 +1793,8 @@ const FREQ_GROUPS = [
 ];
 
 function AdminChores({ family, choreAssignments, setChoreAssignments }) {
+  const choreAssignmentsRef = { current: choreAssignments };
+  choreAssignmentsRef.current = choreAssignments; // always current
   const [activeFreq, setActiveFreq] = useState("daily_ind");
   const [activeDow, setActiveDow] = useState(1);
   const [editingChore, setEditingChore] = useState(null); // { oldLabel, newLabel, freq, dow }
@@ -1868,15 +1870,16 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
   }
 
   async function toggleAssignment(chore, memberId) {
-    setChoreAssignments(prev => {
-      const current = prev[chore] || [];
-      const updated = current.includes(memberId)
-        ? current.filter(id => id !== memberId)
-        : [...current, memberId];
-      const next = { ...prev, [chore]: updated };
-      SB.upsertChore(chore, updated);
-      return next;
-    });
+    // Read from ref to always get the latest value (avoids stale closure)
+    const current = choreAssignmentsRef.current[chore] || [];
+    const isOn = current.includes(memberId);
+    const updated = isOn
+      ? current.filter(id => id !== memberId)
+      : [...current, memberId];
+    // Update state immediately
+    setChoreAssignments(prev => ({ ...prev, [chore]: updated }));
+    // Save to Supabase
+    await SB.upsertChore(chore, updated);
   }
 
   const freq = FREQ_GROUPS.find(f => f.id === activeFreq);
