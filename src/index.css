@@ -12,49 +12,50 @@ html, body {
   width: 100% !important;
   overflow-x: hidden !important;
   background-color: #F7F5F0 !important;
+  /* Include Noto Color Emoji for Windows touchscreen */
+  font-family: 'Fredoka', 'Noto Color Emoji', 'Segoe UI Emoji', 'Apple Color Emoji', sans-serif;
 }
 
 *, *::before, *::after {
   box-sizing: border-box !important;
 }
 
-/* ── Touch: prevent text selection, enable scroll ── */
+/* ── Emoji: force color rendering on ALL platforms ── */
 * {
+  font-variant-emoji: emoji;
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
 }
 
+/* Specific emoji fix for Windows - Segoe UI Emoji renders color */
+span, div, button {
+  font-family: inherit;
+}
+
+/* For elements that only contain emoji, force the emoji font */
+[data-emoji], .emoji {
+  font-family: 'Noto Color Emoji', 'Segoe UI Emoji', 'Apple Color Emoji', sans-serif !important;
+}
+
+/* ── Touch: prevent text selection ── */
 body {
-  /* Prevent text selection globally - this stops the highlight issue */
   -webkit-user-select: none;
   -moz-user-select: none;
   -ms-user-select: none;
   user-select: none;
-  /* Enable touch pan */
   touch-action: pan-y;
 }
 
-/* Allow text selection only in inputs and textareas */
+/* Allow text selection in inputs */
 input, textarea, [contenteditable] {
   -webkit-user-select: text !important;
   user-select: text !important;
 }
 
-/* ── Touch scrolling on all scroll containers ── */
+/* ── Touch scrolling ── */
 div[style*="overflow-y"] {
   -webkit-overflow-scrolling: touch !important;
   overscroll-behavior-y: contain;
-}
-
-/* ── Emoji rendering fix ── */
-/* Force system emoji font for all emoji characters */
-.emoji, [data-emoji] {
-  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif !important;
-}
-
-/* Ensure emojis render in color on all platforms */
-body {
-  font-family: 'Fredoka', 'Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji', sans-serif;
 }
 
 /* ── Scrollbar styling ── */
