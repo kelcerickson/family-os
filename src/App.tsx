@@ -173,6 +173,17 @@ const FAMILY_INIT = [
   { id:"saya",  name:"Saya",  emoji:"🦋", color:"#D4732A", light:"#FDEEDE", defaultOn:true  },
 ];
 
+// ── Daily Themes ─────────────────────────────────────────────────────────────
+const DAY_THEMES = {
+  0: { label:"Reset + Spiritual", emoji:"🙏", color:"#7C5C9E", light:"#F3E8FF", grad:"linear-gradient(160deg,#5B3F80,#7C5C9E,#9B7EC8)", img:"https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&q=80&fit=crop" },
+  1: { label:"Create Day",        emoji:"🎨", color:"#E85D75", light:"#FFE8ED", grad:"linear-gradient(160deg,#C23B5A,#E85D75,#F2899A)", img:"https://images.unsplash.com/photo-1513364776144-60967b0f800f?w=400&q=80&fit=crop" },
+  2: { label:"Business Day",      emoji:"💰", color:"#2D7A56", light:"#D5EEE2", grad:"linear-gradient(160deg,#1A5C3E,#2D7A56,#4A9E76)", img:"https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=400&q=80&fit=crop" },
+  3: { label:"Skill + Sport Day", emoji:"🏃", color:"#D4732A", light:"#FDEEDE", grad:"linear-gradient(160deg,#B05A18,#D4732A,#E8954A)", img:"https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=400&q=80&fit=crop" },
+  4: { label:"Adventure Day",     emoji:"🌎", color:"#3B6FA0", light:"#D6E8F7", grad:"linear-gradient(160deg,#1F4F7A,#3B6FA0,#5A8FC0)", img:"https://images.unsplash.com/photo-1551632811-561732d1e306?w=400&q=80&fit=crop" },
+  5: { label:"Friends + Fun Day", emoji:"🎉", color:"#F59E0B", light:"#FEF3C7", grad:"linear-gradient(160deg,#C17A08,#F59E0B,#FBBF24)", img:"https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=400&q=80&fit=crop" },
+  6: { label:"Family Day",        emoji:"❤️", color:"#DC2626", light:"#FEE2E2", grad:"linear-gradient(160deg,#B91C1C,#DC2626,#EF4444)", img:"https://images.unsplash.com/photo-1511895426328-dc8714191011?w=400&q=80&fit=crop" },
+};
+
 const SECTIONS = [
   { id:"learn",      label:"Learn",      icon:"📖", color:"#4D96FF", light:"#E0EDFF", grad:"linear-gradient(135deg,#4D96FF,#74AFFF)" },
   { id:"exercise",   label:"Exercise",   icon:"💪", color:"#6BCB77", light:"#E5F7E8", grad:"linear-gradient(135deg,#6BCB77,#8FD98A)" },
@@ -563,7 +574,7 @@ const INIT_CAL_EVENTS = [];
 function CalendarPage({ family, events }) {
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
   const [weekAnchor, setWeekAnchor] = useState(TODAY_DATE);
-  const [visibleIds, setVisibleIds] = useState(new Set(family.filter(m => m.defaultOn).map(m => m.id)));
+  const [visibleIds, setVisibleIds] = useState(new Set(family.map(m => m.id))); // Calendar shows everyone by default
   const weekDates = getWeekDates(weekAnchor);
   const todayStr = TODAY_DATE.toDateString();
   const calScrollRef = useState(null);
@@ -631,7 +642,7 @@ function CalendarPage({ family, events }) {
         <div style={{ display:"flex", minWidth:0 }}>
           {/* Time labels column - scrolls with content */}
           <div style={{ width:46, flexShrink:0, borderRight:`1px solid ${T.border}` }}>
-            <div style={{ height:44, borderBottom:`1px solid ${T.border}`, background:T.bg, position:"sticky", top:0, zIndex:10 }} />
+            <div style={{ height:90, borderBottom:`2px solid ${T.border}`, background:T.bg, position:"sticky", top:0, zIndex:10, display:"flex", alignItems:"flex-end", justifyContent:"flex-end", paddingRight:6, paddingBottom:6 }}><span style={{ fontSize:9, color:T.muted, fontWeight:600 }}>TIME</span></div>
             {CAL_HOURS.map(h => (
               <div key={h} style={{ height:CELL_H, display:"flex", alignItems:"flex-start", justifyContent:"flex-end", paddingRight:7, paddingTop:5 }}>
                 <span style={{ fontSize:10, color:T.muted, fontWeight:600 }}>{h===0?"12a":h>12?`${h-12}p`:h===12?"12p":`${h}a`}</span>
@@ -646,11 +657,49 @@ function CalendarPage({ family, events }) {
               const dayEvs = visibleEvents.filter(ev => eventMatchesDate(ev, date));
               return (
                 <div key={dowIdx} style={{ flex:"1 1 0%", minWidth:0, borderRight: dowIdx<6?`1px solid ${T.border}`:"none", position:"relative" }}>
-                  {/* Sticky day header */}
-                  <div style={{ height:44, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", borderBottom:`1px solid ${T.border}`, position:"sticky", top:0, zIndex:9, background: isToday?T.text:T.bg, borderRadius: isToday?"0 0 12px 12px":0 }}>
-                    <span style={{ fontSize:10, fontWeight:700, letterSpacing:0.5, textTransform:"uppercase", color: isToday?"rgba(255,255,255,0.6)":T.muted }}>{DAYS_SHORT[date.getDay()]}</span>
-                    <span style={{ fontSize:16, fontWeight:700, color: isToday?T.white:T.text }}>{date.getDate()}</span>
-                  </div>
+                  {/* Sticky themed day header */}
+                  {(() => {
+                    const theme = DAY_THEMES[date.getDay()];
+                    return (
+                      <div style={{
+                        position:"sticky", top:0, zIndex:9,
+                        borderBottom:`2px solid ${theme.color}44`,
+                        overflow:"hidden",
+                        minHeight: 90,
+                      }}>
+                        {/* Background image */}
+                        <div style={{
+                          position:"absolute", inset:0,
+                          backgroundImage:`url(${theme.img})`,
+                          backgroundSize:"cover", backgroundPosition:"center",
+                          filter:"brightness(0.35)",
+                        }} />
+                        {/* Gradient overlay */}
+                        <div style={{
+                          position:"absolute", inset:0,
+                          background: theme.grad,
+                          opacity:0.7,
+                        }} />
+                        {/* Content */}
+                        <div style={{
+                          position:"relative", zIndex:1,
+                          display:"flex", flexDirection:"column",
+                          alignItems:"center", justifyContent:"center",
+                          height:"100%", padding:"8px 4px",
+                          minHeight:90,
+                        }}>
+                          <div style={{ fontSize:22, lineHeight:1, marginBottom:3 }}>{theme.emoji}</div>
+                          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:"#fff", letterSpacing:0.3, textAlign:"center", lineHeight:1.1 }}>
+                            {theme.label}
+                          </div>
+                          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, color:"rgba(255,255,255,0.75)", marginTop:3, fontWeight:500 }}>
+                            {DAYS_SHORT[date.getDay()]} {date.getDate()}
+                            {isToday && <span style={{ marginLeft:4, background:"rgba(255,255,255,0.3)", borderRadius:99, padding:"1px 6px", fontSize:9, fontWeight:700 }}>TODAY</span>}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {/* Hour grid */}
                   <div style={{ position:"relative", height:CAL_HOURS.length*CELL_H }}>
                     {CAL_HOURS.map((_,i) => <div key={i} style={{ position:"absolute", top:i*CELL_H, left:0, right:0, borderTop:`1px solid ${T.border}`, height:CELL_H }} />)}
@@ -690,14 +739,14 @@ function CalendarPage({ family, events }) {
 // PAGE 2 — TODAY
 // ════════════════════════════════════════════════════════════════════════════
 function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowDay, viewDate }) {
-  // Rainbow only if: at least one core section has tasks AND all tasks in all core sections are done
-  const coreSectionTasks = CORE_SECTIONS.map(sec => tasks[sec.id] || []);
-  const hasAnyCoreTasks = coreSectionTasks.some(items => items.length > 0);
-  const allCoreTasksDone = CORE_SECTIONS.every(sec => {
-    const items = tasks[sec.id] || [];
-    return items.length === 0 || items.every(t => !!(completions && completions[t.label + "|" + member.id]));
-  });
-  const isRainbow = hasAnyCoreTasks && allCoreTasksDone;
+  // Rainbow day: earned when all sections that HAVE tasks are fully completed
+  // Sections with no tasks are skipped (e.g. empty Learn still allows rainbow)
+  const sectionsWithTasks = CORE_SECTIONS.filter(sec => (tasks[sec.id] || []).length > 0);
+  const hasAnyCoreTasks = sectionsWithTasks.length > 0;
+  const allSectionsWithTasksDone = sectionsWithTasks.every(sec =>
+    (tasks[sec.id] || []).every(t => !!(completions && completions[t.label + "|" + member.id]))
+  );
+  const isRainbow = hasAnyCoreTasks && allSectionsWithTasksDone;
 
   // Fire rainbow day callback when all tasks complete
   const prevRainbow = useState(false);
@@ -1456,10 +1505,15 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
                   onClick={async () => {
                     setSaving(true);
                     try {
-                      await SB.upsertSetting("screensaver_msg", screensaverMsg);
+                      // Save to Supabase
+                      const result = await SB.upsertSetting("screensaver_msg", screensaverMsg);
+                      console.log("Saved screensaver msg:", result);
+                      // Also save to localStorage as backup
+                      try { localStorage.setItem("familyos_screensaver_msg", screensaverMsg); } catch {}
                       setSaved(true);
                       setTimeout(() => setSaved(false), 3000);
                     } catch(e) {
+                      console.error("Save error:", e);
                       alert("Error saving: " + e.message);
                     }
                     setSaving(false);
@@ -2397,7 +2451,15 @@ function AppInner() {
       const rdRows = await SB.getRainbowDays().catch(() => []);
       setRainbowDays(rdRows || []);
       const msgRows = await SB.getSetting("screensaver_msg").catch(() => []);
-      if (msgRows && msgRows[0]) setScreensaverMsg(msgRows[0].value || "");
+      if (msgRows && msgRows[0] && msgRows[0].value) {
+        setScreensaverMsg(msgRows[0].value);
+      } else {
+        // Fallback to localStorage
+        try {
+          const local = localStorage.getItem("familyos_screensaver_msg");
+          if (local) setScreensaverMsg(local);
+        } catch {}
+      }
       const allCompRows = await sb("task_completions", "GET", null,
         `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
       ).catch(() => []);
