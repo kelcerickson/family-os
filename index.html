@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
     <title>Family OS</title>
+    <!-- Noto Color Emoji for Windows touchscreen color emoji support -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&family=Noto+Color+Emoji&display=swap">
     <style>
       html, body, #root {
         margin: 0 !important;
@@ -17,22 +20,19 @@
       * {
         box-sizing: border-box !important;
         -webkit-tap-highlight-color: transparent;
+        font-variant-emoji: emoji;
       }
-      /* Enable smooth touch scrolling on all scrollable elements */
-      [style*="overflow-y: auto"],
-      [style*="overflow-y:auto"],
-      [style*="overflowY"] {
-        -webkit-overflow-scrolling: touch !important;
-        touch-action: pan-y !important;
+      /* Windows touchscreen: force Segoe UI Emoji for color emoji */
+      body {
+        font-family: 'Fredoka', 'Noto Color Emoji', 'Segoe UI Emoji', 'Apple Color Emoji', sans-serif;
       }
-      /* Hide scrollbars visually but keep scroll functional */
       ::-webkit-scrollbar { width: 3px; height: 3px; }
       ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 99px; }
+      ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 99px; }
     </style>
   </head>
-  <body style="margin:0;padding:0;width:100%;overflow-x:hidden;background-color:#F7F5F0;touch-action:pan-y;">
-    <div id="root" style="margin:0;padding:0;width:100%;min-height:100vh;display:block;"></div>
+  <body style="margin:0;padding:0;width:100%;touch-action:pan-y;background-color:#F7F5F0;">
+    <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
