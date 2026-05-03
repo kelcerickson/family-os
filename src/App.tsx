@@ -2475,8 +2475,21 @@ function AppInner() {
     const rootEl = document.getElementById('root');
     if (rootEl) rootEl.style.cssText = 'max-width:100%!important;width:100%!important;margin:0!important;padding:0!important;';
     const overrideStyle = document.createElement('style');
-    overrideStyle.textContent = '#root{max-width:100%!important;width:100%!important;margin:0!important;padding:0!important;}';
+    overrideStyle.textContent = `
+      #root{max-width:100%!important;width:100%!important;margin:0!important;padding:0!important;}
+      /* Force color emoji on all platforms including Windows touchscreens */
+      * { font-variant-emoji: emoji; }
+      .emoji-text, span[style*="fontSize"] {
+        font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif !important;
+      }
+    `;
     document.head.appendChild(overrideStyle);
+
+    // Load Noto Color Emoji font for Windows touchscreen emoji support
+    const emojiFont = document.createElement('link');
+    emojiFont.rel = 'stylesheet';
+    emojiFont.href = 'https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap';
+    document.head.appendChild(emojiFont);
 
     // ── Touchscreen monitor scroll fix ──────────────────────────────────────
     // Touchscreen monitors (non-mobile) send pointer events, not touch events.
