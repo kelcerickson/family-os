@@ -2171,18 +2171,62 @@ function AdminTasks({ family, tasks, setTasks, choreAssignments, setChoreAssignm
     const recurrence = isOpen ? "daily" : form.recurrence;
     const dows = isOpen ? [0,1,2,3,4,5,6] : form.dows;
     const specificDate = isOpen ? null : form.specificDate;
-    const bonusPoints = isBonus ? (form.bonusPoints || 1) : 0;
+    const bonusPoints = isBonus ? (parseInt(form.bonusPoints) || 1) : 0;
 
-    // For bonus tasks assigned to a specific person
     const membersToAssign = (isBonus && form.assignedTo !== "all")
       ? [family.find(m => m.id === form.assignedTo)].filter(Boolean)
       : [activeMember];
 
     for (const member of membersToAssign) {
-      const rows = await SB.addTask(member.id, sec.id, form.label.trim(), recurrence, dows, specificDate, bonusPoints);
-      if (rows && rows[0]) {
-        const newT = { id: rows[0].id, label: rows[0].label, done: false, recurrence: rows[0].recurrence, dows: rows[0].dows, specificDate: rows[0].specific_date, bonusPoints };
-        setTasks(prev => ({ ...prev, [member.id]: { ...prev[member.id], [sec.id]: [...(prev[member.id]?.[sec.id]||[]), newT] } }));
+      try {
+        const payload = {
+          member_id: member.id,
+          section: sec.id,
+          label: form.label.trim(),
+          recurrence,
+          dows: dows || [],
+          specific_date: specificDate || null,
+          bonus_points: bonusPoints,
+        };
+        console.log("Saving task:", payload);
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/tasks`, {
+          method: "POST",
+          headers: {
+            "apikey": SUPABASE_KEY,
+            "Authorization": `Bearer ${SUPABASE_KEY}`,
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+          },
+          body: JSON.stringify(payload),
+        });
+        const text = await res.text();
+        console.log("Task save response:", res.status, text);
+        if (!res.ok) {
+          alert(`Error saving task: ${text}`);
+          return;
+        }
+        const rows = JSON.parse(text);
+        if (rows && rows[0]) {
+          const newT = {
+            id: rows[0].id,
+            label: rows[0].label,
+            done: false,
+            recurrence: rows[0].recurrence,
+            dows: rows[0].dows,
+            specificDate: rows[0].specific_date,
+            bonusPoints: rows[0].bonus_points || 0,
+          };
+          setTasks(prev => ({
+            ...prev,
+            [member.id]: {
+              ...prev[member.id],
+              [sec.id]: [...(prev[member.id]?.[sec.id] || []), newT],
+            },
+          }));
+        }
+      } catch(e) {
+        console.error("Task save error:", e);
+        alert(`Error: ${e.message}`);
       }
     }
     setForm(EMPTY_FORM);
