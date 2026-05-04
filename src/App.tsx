@@ -573,10 +573,10 @@ const INIT_CAL_EVENTS = [];
 
 function CalendarPage({ family, events }) {
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
-  const [weekAnchor, setWeekAnchor] = useState(TODAY_DATE);
+  const [weekAnchor, setWeekAnchor] = useState(() => getMountainToday());
   const [visibleIds, setVisibleIds] = useState(new Set(family.map(m => m.id))); // Calendar shows everyone by default
   const weekDates = getWeekDates(weekAnchor);
-  const todayStr = TODAY_DATE.toDateString();
+  const todayStr = getMountainToday().toDateString();
   const calScrollRef = useState(null);
   useEffect(() => {
     if (calScrollRef[0]) calScrollRef[0].scrollTop = 2 * 48;
