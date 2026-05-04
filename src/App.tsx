@@ -116,8 +116,8 @@ function dbEventsToApp(rows) {
 function dbTasksToApp(rows) {
   const result = {};
   (rows||[]).forEach(r => {
-    if (!result[r.member_id]) result[r.member_id] = { learn:[], exercise:[], contribute:[], goals:[] };
-    if (result[r.member_id][r.section]) result[r.member_id][r.section].push({
+    if (!result[r.member_id]) result[r.member_id] = { learn:[], exercise:[], contribute:[], goals:[], bonus:[], open:[] };
+    if (result[r.member_id][r.section] !== undefined) result[r.member_id][r.section].push({
       id: r.id, label: r.label, done: false,
       recurrence: r.recurrence || "daily",
       dows: (r.recurrence === "weekly" && r.dows) ? r.dows : null,
