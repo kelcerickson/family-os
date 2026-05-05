@@ -1662,7 +1662,14 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
     return ev.recurrence;
   }
 
-  function formatH(h) { return h > 12 ? `${h-12}:00 PM` : h === 12 ? "12:00 PM" : `${h}:00 AM`; }
+  function formatH(h) {
+    const hour = Math.floor(h);
+    const mins = h % 1 === 0.5 ? "30" : "00";
+    if (hour === 0 || hour === 24) return `12:${mins} AM`;
+    if (hour === 12) return `12:${mins} PM`;
+    if (hour > 12) return `${hour-12}:${mins} PM`;
+    return `${hour}:${mins} AM`;
+  }
 
   const OAUTH_STEPS = {
     google: {
@@ -1905,7 +1912,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Time</label>
               <select value={form.startH} onChange={e=>setForm(f=>({...f,startH:+e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }}>
-                {CAL_HOURS.map(h => <option key={h} value={h}>{formatH(h)}</option>)}
+                {Array.from({ length: 40 }, (_, i) => i * 0.5 + 5).map(h => <option key={h} value={h}>{formatH(h)}</option>)}
               </select>
             </div>
             <div>
