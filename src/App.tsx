@@ -43,10 +43,13 @@ const SB = {
   getEvents:   () => sb("cal_events", "GET", null, "?order=created_at"),
   addEvent:    (ev) => sb("cal_events", "POST", {
     title: ev.title, member_ids: ev.memberIds, start_h: ev.startH, dur: ev.dur,
-    recurrence: ev.recurrence || "weekly", dows: ev.dows || [ev.dow||1],
-    specific_date: ev.recurrence === "monthly"
-      ? `monthly_week_${ev.monthlyWeek ?? 1}`
-      : (ev.specificDate || null),
+    recurrence: ev.recurrence || "weekly",
+    // For monthly events, encode the occurrence week as a negative number at end of dows
+    // e.g. [5, -2] = 2nd Friday. For weekly, just store the days normally.
+    dows: ev.recurrence === "monthly"
+      ? [...(ev.dows || [ev.dow||1]), -(ev.monthlyWeek ?? 1)]
+      : (ev.dows || [ev.dow||1]),
+    specific_date: ev.recurrence === "once" ? (ev.specificDate || null) : null,
   }),
   deleteEvent: (id) => sb(`cal_events?id=eq.${id}`, "DELETE"),
 
@@ -110,13 +113,17 @@ const SB = {
 // Convert DB rows to app format
 function dbEventsToApp(rows) {
   return (rows||[]).map(r => {
-    const isMonthlyWeek = typeof r.specific_date === "string" && r.specific_date.startsWith("monthly_week_");
+    const rawDows = r.dows || [1];
+    // For monthly events, the occurrence week is encoded as a negative number in dows
+    const negIdx = rawDows.findIndex(d => d < 0);
+    const monthlyWeek = negIdx >= 0 ? Math.abs(rawDows[negIdx]) : 1;
+    const dows = rawDows.filter(d => d >= 0);
     return {
       id: r.id, title: r.title, memberIds: r.member_ids,
       startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
-      dows: r.dows, dow: (r.dows||[1])[0],
-      specificDate: isMonthlyWeek ? null : r.specific_date,
-      monthlyWeek: isMonthlyWeek ? parseInt(r.specific_date.replace("monthly_week_","")) : 1,
+      dows, dow: dows[0] ?? 1,
+      specificDate: r.specific_date || null,
+      monthlyWeek,
     };
   });
 }
@@ -1634,9 +1641,13 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
     if (form.recurrence === "once" && !form.specificDate) return;
     if ((form.recurrence === "weekly" || form.recurrence === "monthly") && (!form.dows || form.dows.length === 0)) return;
     const rows = await SB.addEvent({ ...form, monthlyWeek: form.monthlyWeek ?? 1 });
-    if (rows) setEvents(prev => [...prev, ...dbEventsToApp(rows)]);
-    setForm(EMPTY_FORM);
-    setShowForm(false);
+    if (rows) {
+      setEvents(prev => [...prev, ...dbEventsToApp(rows)]);
+      setForm(EMPTY_FORM);
+      setShowForm(false);
+    } else {
+      alert("Failed to save event — check the browser console for details.");
+    }
   }
 
   function recurrenceLabel(ev) {
