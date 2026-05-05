@@ -1232,8 +1232,11 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     { id:"ex_7",        emoji:"💪", label:"Getting Strong",   desc:"Completed Exercise 7 days",              category:"exercise", check: s => s.exerciseDays >= 7 },
     { id:"ex_14",       emoji:"🏃", label:"On the Move",      desc:"Completed Exercise 14 days",             category:"exercise", check: s => s.exerciseDays >= 14 },
     { id:"ex_30",       emoji:"🏅", label:"Athlete",          desc:"Completed Exercise 30 days",             category:"exercise", check: s => s.exerciseDays >= 30 },
-
-    // 🤝 Contribute badges
+    // Exercise consistency (streak + monthly volume)
+    { id:"ex_streak3",  emoji:"🔥", label:"3-Day Burn",       desc:"Exercised 3 days in a row",              category:"exercise", check: s => s.exerciseStreak >= 3 },
+    { id:"ex_streak7",  emoji:"⚡", label:"Week Warrior",     desc:"Exercised 7 days in a row",              category:"exercise", check: s => s.exerciseStreak >= 7 },
+    { id:"ex_month10",  emoji:"🥈", label:"Consistent",       desc:"Exercised 10+ days in a single month",   category:"exercise", check: s => s.exerciseBestMonth >= 10 },
+    { id:"ex_month20",  emoji:"🥇", label:"Dedicated",        desc:"Exercised 20+ days in a single month",   category:"exercise", check: s => s.exerciseBestMonth >= 20 },
     { id:"con_first",   emoji:"✨", label:"Helping Hand",     desc:"Completed Contribute tasks for the first time", category:"contribute", check: s => s.contributeDays >= 1 },
     { id:"con_7",       emoji:"🏠", label:"Home Hero",        desc:"Contributed 7 days",                    category:"contribute", check: s => s.contributeDays >= 7 },
     { id:"con_14",      emoji:"⭐", label:"Team Player",      desc:"Contributed 14 days",                   category:"contribute", check: s => s.contributeDays >= 14 },
@@ -1273,15 +1276,35 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     const now = new Date();
     const weekAgo = new Date(now); weekAgo.setDate(now.getDate()-7);
     const memberGoals = tasks[memberId]?.goals || [];
+
+    // Exercise streak: count consecutive days going back from today
+    const exDates = Array.from(datesBySection.exercise).sort();
+    let exerciseStreak = 0;
+    if (exDates.length > 0) {
+      const cursor = new Date(); cursor.setHours(0,0,0,0);
+      for (let i = 0; i < 365; i++) {
+        const dStr = `${cursor.getFullYear()}-${String(cursor.getMonth()+1).padStart(2,'0')}-${String(cursor.getDate()).padStart(2,'0')}`;
+        if (exDates.includes(dStr)) { exerciseStreak++; cursor.setDate(cursor.getDate()-1); }
+        else break;
+      }
+    }
+
+    // Exercise best month: max exercise days completed in any single calendar month
+    const exByMonth = {};
+    exDates.forEach(d => { const key = d.slice(0,7); exByMonth[key] = (exByMonth[key]||0) + 1; });
+    const exerciseBestMonth = Object.values(exByMonth).length > 0 ? Math.max(...Object.values(exByMonth)) : 0;
+
     return {
-      totalRainbow:   memberRd.length,
-      streak:         streaks[memberId] || 0,
-      rdWeek:         memberRd.filter(r => new Date(r.date+"T00:00:00") >= weekAgo).length,
-      learnDays:      datesBySection.learn.size,
-      exerciseDays:   datesBySection.exercise.size,
-      contributeDays: datesBySection.contribute.size,
-      goalsDays:      datesBySection.goals.size,
-      goalsSet:       memberGoals.length,
+      totalRainbow:      memberRd.length,
+      streak:            streaks[memberId] || 0,
+      rdWeek:            memberRd.filter(r => new Date(r.date+"T00:00:00") >= weekAgo).length,
+      learnDays:         datesBySection.learn.size,
+      exerciseDays:      datesBySection.exercise.size,
+      exerciseStreak,
+      exerciseBestMonth,
+      contributeDays:    datesBySection.contribute.size,
+      goalsDays:         datesBySection.goals.size,
+      goalsSet:          memberGoals.length,
     };
   }
 
@@ -1293,6 +1316,36 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
   const streak  = streaks[activeMember.id]  || 0;
   const wPts    = weekPts[activeMember.id]  || 0;
   const todayPts = SECTIONS.length;
+
+  // Compute last week's points from allCompletions
+  const lastWeekPts = (() => {
+    const now = new Date();
+    // Start of last week (Mon) and end of last week (Sun)
+    const todayDow = now.getDay(); // 0=Sun
+    const daysToLastMon = ((todayDow + 6) % 7) + 7; // days back to last Mon
+    const lastMon = new Date(now); lastMon.setDate(now.getDate() - daysToLastMon); lastMon.setHours(0,0,0,0);
+    const lastSun = new Date(lastMon); lastSun.setDate(lastMon.getDate() + 6); lastSun.setHours(23,59,59,999);
+    const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth()+1).padStart(2,'0')}-${String(lastMon.getDate()).padStart(2,'0')}`;
+    const lastSunStr = `${lastSun.getFullYear()}-${String(lastSun.getMonth()+1).padStart(2,'0')}-${String(lastSun.getDate()).padStart(2,'0')}`;
+    // Count distinct (date, section) pairs = 1 pt each (same as weekPts logic)
+    const memberComps = (allCompletions||[]).filter(c =>
+      c.member_id === activeMember.id &&
+      c.completed_date >= lastMonStr &&
+      c.completed_date <= lastSunStr
+    );
+    // Each unique date+section combo = 1 pt
+    const seen = new Set();
+    memberComps.forEach(c => {
+      const memberTasks = tasks[activeMember.id] || {};
+      for (const sec of ["learn","exercise","contribute","goals","bonus","open"]) {
+        if ((memberTasks[sec]||[]).some(t => t.label === c.task_label)) {
+          seen.add(`${c.completed_date}|${sec}`);
+        }
+      }
+    });
+    return seen.size;
+  })();
+
   const earnedBadges = getEarnedBadges(activeMember.id);
 
   return (
@@ -1416,14 +1469,18 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
         })()}
 
         {/* Points & Money */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
-          {[{label:"Today",pts:todayPts},{label:"This Week",pts:wPts}].map(card => (
-            <div key={card.label} style={{ background:T.white, border:`2px solid ${T.border}`, borderRadius:18, padding:"14px 12px", textAlign:"center" }}>
-              <div style={{ fontSize:11, fontWeight:700, color:T.muted, letterSpacing:0.8, textTransform:"uppercase", marginBottom:6 }}>{card.label}</div>
-              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:30, fontWeight:700, color:activeMember.color, lineHeight:1 }}>{card.pts}</div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10, marginBottom:18 }}>
+          {[
+            { label:"Today",     pts:todayPts,    dimmed:false },
+            { label:"This Week", pts:wPts,         dimmed:false },
+            { label:"Last Week", pts:lastWeekPts,  dimmed:true  },
+          ].map(card => (
+            <div key={card.label} style={{ background: card.dimmed ? "#F5F3EF" : T.white, border:`2px solid ${card.dimmed ? T.stone : T.border}`, borderRadius:18, padding:"14px 10px", textAlign:"center", gridColumn: card.label==="Today" ? "span 1" : "span 1" }}>
+              <div style={{ fontSize:11, fontWeight:700, color: card.dimmed ? T.muted : T.muted, letterSpacing:0.8, textTransform:"uppercase", marginBottom:6 }}>{card.label}</div>
+              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color: card.dimmed ? T.sub : activeMember.color, lineHeight:1 }}>{card.pts}</div>
               <div style={{ fontSize:11, color:T.sub, marginTop:2 }}>pts</div>
               <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
-                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:20, fontWeight:700, color:"#2D7A56" }}>${(card.pts*0.25).toFixed(2)}</div>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color: card.dimmed ? T.sub : "#2D7A56" }}>${(card.pts*0.25).toFixed(2)}</div>
                 <div style={{ fontSize:10, color:T.muted }}>earned</div>
               </div>
             </div>
@@ -2521,18 +2578,25 @@ function AppInner() {
     const overrideStyle = document.createElement('style');
     overrideStyle.textContent = `
       #root{max-width:100%!important;width:100%!important;margin:0!important;padding:0!important;}
-      /* Force color emoji on all platforms including Windows touchscreens */
+      /* Force Noto Color Emoji first so Windows touchscreens render emoji correctly.
+         Segoe UI Emoji renders as empty squares in many Chromium builds on Windows. */
       * { font-variant-emoji: emoji; }
-      .emoji-text, span[style*="fontSize"] {
-        font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif !important;
+      [style*="Fredoka"] {
+        font-family: "Fredoka", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif !important;
+      }
+      [style*="Nunito"] {
+        font-family: "Nunito", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif !important;
+      }
+      span, button, div {
+        font-family: "Fredoka", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
       }
     `;
     document.head.appendChild(overrideStyle);
 
-    // Load Noto Color Emoji font for Windows touchscreen emoji support
+    // Load Noto Color Emoji + main fonts in one request for speed
     const emojiFont = document.createElement('link');
     emojiFont.rel = 'stylesheet';
-    emojiFont.href = 'https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap';
+    emojiFont.href = 'https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap';
     document.head.appendChild(emojiFont);
 
     // ── Touchscreen monitor scroll fix ──────────────────────────────────────
