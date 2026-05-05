@@ -44,7 +44,9 @@ const SB = {
   addEvent:    (ev) => sb("cal_events", "POST", {
     title: ev.title, member_ids: ev.memberIds, start_h: ev.startH, dur: ev.dur,
     recurrence: ev.recurrence || "weekly", dows: ev.dows || [ev.dow||1],
-    specific_date: ev.specificDate || null,
+    specific_date: ev.recurrence === "monthly"
+      ? `monthly_week_${ev.monthlyWeek ?? 1}`
+      : (ev.specificDate || null),
   }),
   deleteEvent: (id) => sb(`cal_events?id=eq.${id}`, "DELETE"),
 
@@ -107,11 +109,16 @@ const SB = {
 
 // Convert DB rows to app format
 function dbEventsToApp(rows) {
-  return (rows||[]).map(r => ({
-    id: r.id, title: r.title, memberIds: r.member_ids,
-    startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
-    dows: r.dows, specificDate: r.specific_date, dow: (r.dows||[1])[0],
-  }));
+  return (rows||[]).map(r => {
+    const isMonthlyWeek = typeof r.specific_date === "string" && r.specific_date.startsWith("monthly_week_");
+    return {
+      id: r.id, title: r.title, memberIds: r.member_ids,
+      startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
+      dows: r.dows, dow: (r.dows||[1])[0],
+      specificDate: isMonthlyWeek ? null : r.specific_date,
+      monthlyWeek: isMonthlyWeek ? parseInt(r.specific_date.replace("monthly_week_","")) : 1,
+    };
+  });
 }
 function dbTasksToApp(rows) {
   const result = {};
@@ -583,17 +590,24 @@ function CalendarPage({ family, events }) {
   }, [calScrollRef[0]]);
   function eventMatchesDate(ev, date) {
     const dow = date.getDay();
-    // Support both old single dow and new dows array
     const matchesDow = ev.dows ? ev.dows.includes(dow) : ev.dow === dow;
     if (ev.recurrence === "daily") return true;
     if (ev.recurrence === "weekly") return matchesDow;
-    if (ev.recurrence === "monthly") return matchesDow && date.getDate() <= 7;
+    if (ev.recurrence === "monthly") {
+      if (!matchesDow) return false;
+      const weekNum = ev.monthlyWeek ?? 1;
+      if (weekNum === 5) {
+        // "Last" occurrence: check that adding 7 days goes into next month
+        const nextWeek = new Date(date); nextWeek.setDate(date.getDate() + 7);
+        return nextWeek.getMonth() !== date.getMonth();
+      }
+      // nth occurrence: date falls in the right 7-day window
+      return Math.ceil(date.getDate() / 7) === weekNum;
+    }
     if (ev.recurrence === "once" && ev.specificDate) {
-      // Compare date strings directly to avoid timezone issues
       const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
       return ev.specificDate === dateStr;
     }
-    // Legacy events default to weekly by dow
     return matchesDow;
   }
   const visibleEvents = events.filter(ev => ev.memberIds.some(id => visibleIds.has(id)));
@@ -1237,6 +1251,8 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     { id:"ex_streak7",  emoji:"⚡", label:"Week Warrior",     desc:"Exercised 7 days in a row",              category:"exercise", check: s => s.exerciseStreak >= 7 },
     { id:"ex_month10",  emoji:"🥈", label:"Consistent",       desc:"Exercised 10+ days in a single month",   category:"exercise", check: s => s.exerciseBestMonth >= 10 },
     { id:"ex_month20",  emoji:"🥇", label:"Dedicated",        desc:"Exercised 20+ days in a single month",   category:"exercise", check: s => s.exerciseBestMonth >= 20 },
+
+    // 🤝 Contribute badges
     { id:"con_first",   emoji:"✨", label:"Helping Hand",     desc:"Completed Contribute tasks for the first time", category:"contribute", check: s => s.contributeDays >= 1 },
     { id:"con_7",       emoji:"🏠", label:"Home Hero",        desc:"Contributed 7 days",                    category:"contribute", check: s => s.contributeDays >= 7 },
     { id:"con_14",      emoji:"⭐", label:"Team Player",      desc:"Contributed 14 days",                   category:"contribute", check: s => s.contributeDays >= 14 },
@@ -1277,7 +1293,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     const weekAgo = new Date(now); weekAgo.setDate(now.getDate()-7);
     const memberGoals = tasks[memberId]?.goals || [];
 
-    // Exercise streak: count consecutive days going back from today
+    // Exercise streak: consecutive days back from today
     const exDates = Array.from(datesBySection.exercise).sort();
     let exerciseStreak = 0;
     if (exDates.length > 0) {
@@ -1289,7 +1305,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
       }
     }
 
-    // Exercise best month: max exercise days completed in any single calendar month
+    // Exercise best month: max exercise days in any single calendar month
     const exByMonth = {};
     exDates.forEach(d => { const key = d.slice(0,7); exByMonth[key] = (exByMonth[key]||0) + 1; });
     const exerciseBestMonth = Object.values(exByMonth).length > 0 ? Math.max(...Object.values(exByMonth)) : 0;
@@ -1320,20 +1336,17 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
   // Compute last week's points from allCompletions
   const lastWeekPts = (() => {
     const now = new Date();
-    // Start of last week (Mon) and end of last week (Sun)
-    const todayDow = now.getDay(); // 0=Sun
-    const daysToLastMon = ((todayDow + 6) % 7) + 7; // days back to last Mon
+    const todayDow = now.getDay();
+    const daysToLastMon = ((todayDow + 6) % 7) + 7;
     const lastMon = new Date(now); lastMon.setDate(now.getDate() - daysToLastMon); lastMon.setHours(0,0,0,0);
-    const lastSun = new Date(lastMon); lastSun.setDate(lastMon.getDate() + 6); lastSun.setHours(23,59,59,999);
+    const lastSun = new Date(lastMon); lastSun.setDate(lastMon.getDate() + 6);
     const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth()+1).padStart(2,'0')}-${String(lastMon.getDate()).padStart(2,'0')}`;
     const lastSunStr = `${lastSun.getFullYear()}-${String(lastSun.getMonth()+1).padStart(2,'0')}-${String(lastSun.getDate()).padStart(2,'0')}`;
-    // Count distinct (date, section) pairs = 1 pt each (same as weekPts logic)
     const memberComps = (allCompletions||[]).filter(c =>
       c.member_id === activeMember.id &&
       c.completed_date >= lastMonStr &&
       c.completed_date <= lastSunStr
     );
-    // Each unique date+section combo = 1 pt
     const seen = new Set();
     memberComps.forEach(c => {
       const memberTasks = tasks[activeMember.id] || {};
@@ -1469,18 +1482,18 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
         })()}
 
         {/* Points & Money */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10, marginBottom:18 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:18 }}>
           {[
-            { label:"Today",     pts:todayPts,    dimmed:false },
-            { label:"This Week", pts:wPts,         dimmed:false },
-            { label:"Last Week", pts:lastWeekPts,  dimmed:true  },
+            { label:"Today",     pts:todayPts,   dimmed:false },
+            { label:"This Week", pts:wPts,        dimmed:false },
+            { label:"Last Week", pts:lastWeekPts, dimmed:true  },
           ].map(card => (
-            <div key={card.label} style={{ background: card.dimmed ? "#F5F3EF" : T.white, border:`2px solid ${card.dimmed ? T.stone : T.border}`, borderRadius:18, padding:"14px 10px", textAlign:"center", gridColumn: card.label==="Today" ? "span 1" : "span 1" }}>
-              <div style={{ fontSize:11, fontWeight:700, color: card.dimmed ? T.muted : T.muted, letterSpacing:0.8, textTransform:"uppercase", marginBottom:6 }}>{card.label}</div>
-              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color: card.dimmed ? T.sub : activeMember.color, lineHeight:1 }}>{card.pts}</div>
+            <div key={card.label} style={{ background: card.dimmed?"#F5F3EF":T.white, border:`2px solid ${card.dimmed?T.stone:T.border}`, borderRadius:18, padding:"14px 10px", textAlign:"center" }}>
+              <div style={{ fontSize:11, fontWeight:700, color:T.muted, letterSpacing:0.8, textTransform:"uppercase", marginBottom:6 }}>{card.label}</div>
+              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color: card.dimmed?T.sub:activeMember.color, lineHeight:1 }}>{card.pts}</div>
               <div style={{ fontSize:11, color:T.sub, marginTop:2 }}>pts</div>
               <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
-                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color: card.dimmed ? T.sub : "#2D7A56" }}>${(card.pts*0.25).toFixed(2)}</div>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color: card.dimmed?T.sub:"#2D7A56" }}>${(card.pts*0.25).toFixed(2)}</div>
                 <div style={{ fontSize:10, color:T.muted }}>earned</div>
               </div>
             </div>
@@ -1594,7 +1607,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
 }
 
 function AdminCalendar({ family, events, setEvents, memberMap }) {
-  const EMPTY_FORM = { title:"", memberIds:[], startH:9, dur:1, recurrence:"weekly", dows:[1], specificDate:"", color:null };
+  const EMPTY_FORM = { title:"", memberIds:[], startH:9, dur:1, recurrence:"weekly", dows:[1], specificDate:"", monthlyWeek:1 };
   const [form, setForm] = useState(EMPTY_FORM);
   const [showForm, setShowForm] = useState(false);
   const [showOAuthGuide, setShowOAuthGuide] = useState(null);
@@ -1620,7 +1633,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
     if (!form.title || form.memberIds.length===0) return;
     if (form.recurrence === "once" && !form.specificDate) return;
     if ((form.recurrence === "weekly" || form.recurrence === "monthly") && (!form.dows || form.dows.length === 0)) return;
-    const rows = await SB.addEvent(form);
+    const rows = await SB.addEvent({ ...form, monthlyWeek: form.monthlyWeek ?? 1 });
     if (rows) setEvents(prev => [...prev, ...dbEventsToApp(rows)]);
     setForm(EMPTY_FORM);
     setShowForm(false);
@@ -1631,7 +1644,10 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
     if (ev.recurrence === "daily") return "Every day";
     const days = ev.dows ? ev.dows.map(i=>DOW_LABELS[i].slice(0,3)).join(", ") : (ev.dow !== undefined ? DOW_LABELS[ev.dow] : "");
     if (ev.recurrence === "weekly") return `Every ${days}`;
-    if (ev.recurrence === "monthly") return `Monthly · ${days}`;
+    if (ev.recurrence === "monthly") {
+      const occLabel = ["1st","2nd","3rd","4th","Last"][(ev.monthlyWeek??1)-1];
+      return `Monthly · ${occLabel} ${days}`;
+    }
     return ev.recurrence;
   }
 
@@ -1800,7 +1816,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
           {(form.recurrence === "weekly" || form.recurrence === "monthly") && (
             <div style={{ marginBottom:12 }}>
               <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>
-                {form.recurrence === "weekly" ? "Days of Week" : "Which Days Each Month"}
+                {form.recurrence === "weekly" ? "Days of Week" : "Which Day of the Week"}
                 <span style={{ fontWeight:400, color:T.muted, marginLeft:6 }}>— tap to select multiple</span>
               </label>
               <div style={{ display:"flex", gap:5 }}>
@@ -1826,6 +1842,40 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
               {(form.dows||[]).length > 0 && (
                 <div style={{ fontSize:11, color:T.muted, fontFamily:"'Nunito',sans-serif", marginTop:5 }}>
                   Selected: {(form.dows||[]).map(i=>DOW_LABELS[i]).join(", ")}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Monthly occurrence picker — which week of the month */}
+          {form.recurrence === "monthly" && (
+            <div style={{ marginBottom:12 }}>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>
+                Which Occurrence Each Month
+              </label>
+              <div style={{ display:"flex", gap:6 }}>
+                {[
+                  { value:1, label:"1st" },
+                  { value:2, label:"2nd" },
+                  { value:3, label:"3rd" },
+                  { value:4, label:"4th" },
+                  { value:5, label:"Last" },
+                ].map(opt => {
+                  const on = (form.monthlyWeek ?? 1) === opt.value;
+                  return (
+                    <button key={opt.value} onClick={() => setForm(f => ({ ...f, monthlyWeek: opt.value }))} style={{
+                      flex:1, padding:"9px 4px", borderRadius:10, border:"none", cursor:"pointer",
+                      background: on ? "#3B6FA0" : T.stone,
+                      color: on ? "#fff" : T.sub,
+                      fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
+                      transition:"all 0.15s",
+                    }}>{opt.label}</button>
+                  );
+                })}
+              </div>
+              {(form.dows||[]).length > 0 && (
+                <div style={{ fontSize:11, color:"#3B6FA0", fontFamily:"'Nunito',sans-serif", marginTop:6, fontWeight:600 }}>
+                  📅 Every {["1st","2nd","3rd","4th","Last"][(form.monthlyWeek??1)-1]} {DOW_LABELS[(form.dows||[1])[0]]} of the month
                 </div>
               )}
             </div>
@@ -2578,8 +2628,6 @@ function AppInner() {
     const overrideStyle = document.createElement('style');
     overrideStyle.textContent = `
       #root{max-width:100%!important;width:100%!important;margin:0!important;padding:0!important;}
-      /* Force Noto Color Emoji first so Windows touchscreens render emoji correctly.
-         Segoe UI Emoji renders as empty squares in many Chromium builds on Windows. */
       * { font-variant-emoji: emoji; }
       [style*="Fredoka"] {
         font-family: "Fredoka", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif !important;
@@ -2593,7 +2641,6 @@ function AppInner() {
     `;
     document.head.appendChild(overrideStyle);
 
-    // Load Noto Color Emoji + main fonts in one request for speed
     const emojiFont = document.createElement('link');
     emojiFont.rel = 'stylesheet';
     emojiFont.href = 'https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap';
