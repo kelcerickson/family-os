@@ -833,12 +833,15 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
               <div style={{ background: done?`${sec.color}15`:T.white, border:`2px solid ${done?sec.color+"55":T.border}`, borderTop:"none", borderRadius:"0 0 12px 12px", padding:"6px 8px 8px" }}>
                 {secTasksWithDone.map(task => (
                   <div key={task.id} onClick={() => onToggle(member.id, sec.id, task.label, task.done)}
-                    style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 8px", borderRadius:10, marginTop:4, cursor:"pointer", transition:"all 0.15s", background: task.done?`${sec.color}20`:"transparent" }}>
+                    style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 8px", borderRadius:10, marginTop:4, cursor:"pointer", transition:"all 0.15s", background: task.carriedOver ? (task.done?"#FFF0E020":"#FFF8F0") : task.done?`${sec.color}20`:"transparent",
+                    border: task.carriedOver && !task.done ? "1px dashed #FF9F45" : "1px solid transparent" }}>
                     <div style={{ width:22, height:22, borderRadius:"50%", flexShrink:0, border:`2.5px solid ${task.done?sec.color:T.border}`, background: task.done?sec.color:"transparent", display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s" }}>
                       {task.done && <span style={{ color:"#fff", fontSize:11 }}>✓</span>}
                     </div>
                     <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600, color: task.done?sec.color:T.text, textDecoration: task.done?"line-through":"none", lineHeight:1.35 }}>{task.label}</span>
-                    {task.bonusPoints > 0 && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:"#92700A", background:"#FFFBE6", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>+{task.bonusPoints}pt</span>}
+                    {task.carriedOver && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:10, fontWeight:700, color:"#FF9F45", background:"#FFF0E0", borderRadius:99, padding:"1px 6px", flexShrink:0 }}>yesterday</span>}
+                    {task.highValue && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:"#7C3AED", background:"#F3E8FF", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>+5 pts</span>}
+                    {task.bonusPoints > 0 && !task.highValue && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:"#92700A", background:"#FFFBE6", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>+{task.bonusPoints}pt</span>}
                   </div>
                 ))}
                 {!done && <div style={{ textAlign:"center", marginTop:6, fontFamily:"'Nunito',sans-serif", fontSize:10, color:T.muted }}>Complete all to earn <span style={{ fontWeight:800, color:sec.color }}>+1 pt</span></div>}
@@ -851,7 +854,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
   );
 }
 
-function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay }) {
+function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, allCompletions }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
   // Task completions loaded from Supabase per day (moved after viewDate)
@@ -962,16 +965,66 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay }) {
               learn:      filterByDate(dbMemberTasks.learn || []),
               exercise:   filterByDate(dbMemberTasks.exercise || []),
               goals:      filterByDate(dbMemberTasks.goals || []),
-              contribute: choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute || []),
+              contribute: (() => {
+                const todayChores = choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute || []);
+
+                // Tag high-value chores (monthly/quarterly/semi-annual/annual) with 5 bonus pts
+                const HIGH_VALUE = new Set([...MONTHLY_CHORES, ...QUARTERLY_CHORES, ...SEMI_ANNUAL_CHORES, ...ANNUAL_CHORES]);
+                const taggedToday = todayChores.map(t => ({
+                  ...t,
+                  bonusPoints: HIGH_VALUE.has(t.label) ? 5 : 0,
+                  highValue: HIGH_VALUE.has(t.label),
+                }));
+
+                // Carry over any unfinished chores from yesterday
+                const yesterday = new Date(viewDate); yesterday.setDate(viewDate.getDate() - 1);
+                const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth()+1).padStart(2,'0')}-${String(yesterday.getDate()).padStart(2,'0')}`;
+                const yesterdayChores = getContributeTasksForMember(m.id, yesterday, choreAssignments);
+                const carryOvers = yesterdayChores.filter(c => {
+                  const key = c.label + "|" + m.id;
+                  const wasCompleted = (allCompletions||[]).some(comp =>
+                    comp.task_label === c.label &&
+                    comp.member_id === m.id &&
+                    comp.completed_date === yesterdayStr
+                  );
+                  // Only carry over if not completed yesterday AND not already in today's list
+                  return !wasCompleted && !taggedToday.some(t => t.label === c.label);
+                }).map(c => ({
+                  ...c,
+                  label: `${c.label} (yesterday)`,
+                  carriedOver: true,
+                  bonusPoints: 0,
+                }));
+
+                return [...taggedToday, ...carryOvers];
+              })(),
               // Bonus: filter by date like normal tasks
               bonus:      filterByDate(dbMemberTasks.bonus || []),
               // Open tasks: always show all (no date filter - they persist until done)
               open:       (dbMemberTasks.open || []),
             };
-            const memberPts = CORE_SECTIONS.filter(s => {
-              const items = mergedTasks[s.id] || [];
-              return items.length > 0 && items.every(t => !!(completions && completions[t.label + "|" + m.id]));
-            }).length;
+            const HIGH_VALUE_CHORE_SET = new Set([...MONTHLY_CHORES, ...QUARTERLY_CHORES, ...SEMI_ANNUAL_CHORES, ...ANNUAL_CHORES]);
+            const memberPts = (() => {
+              let pts = 0;
+              // 1 pt per core section fully completed
+              CORE_SECTIONS.forEach(s => {
+                const items = mergedTasks[s] || [];
+                if (items.length > 0 && items.every(t => !!(completions && completions[t.label + "|" + m.id]))) {
+                  pts += 1;
+                }
+              });
+              // Bonus tasks: add bonusPoints per completed task
+              (mergedTasks.bonus || []).forEach(t => {
+                if (completions && completions[t.label + "|" + m.id]) pts += (t.bonusPoints || 1);
+              });
+              // High-value chores: 5 pts each when completed
+              (mergedTasks.contribute || []).forEach(t => {
+                if (HIGH_VALUE_CHORE_SET.has(t.label) && completions && completions[t.label + "|" + m.id]) {
+                  pts += 5;
+                }
+              });
+              return pts;
+            })();
             return <PersonColumn key={m.id} member={m} tasks={mergedTasks} onToggle={toggleTask} points={memberPts} completions={completions} onRainbowDay={onRainbowDay} viewDate={viewDate} />;
           })}
         </div>
@@ -1337,33 +1390,78 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
   }
 
   const streak  = streaks[activeMember.id]  || 0;
-  const wPts    = weekPts[activeMember.id]  || 0;
-  const todayPts = SECTIONS.length;
 
-  // Compute last week's points from allCompletions
-  const lastWeekPts = (() => {
-    const now = new Date();
-    const todayDow = now.getDay();
-    const daysToLastMon = ((todayDow + 6) % 7) + 7;
-    const lastMon = new Date(now); lastMon.setDate(now.getDate() - daysToLastMon); lastMon.setHours(0,0,0,0);
-    const lastSun = new Date(lastMon); lastSun.setDate(lastMon.getDate() + 6);
-    const lastMonStr = `${lastMon.getFullYear()}-${String(lastMon.getMonth()+1).padStart(2,'0')}-${String(lastMon.getDate()).padStart(2,'0')}`;
-    const lastSunStr = `${lastSun.getFullYear()}-${String(lastSun.getMonth()+1).padStart(2,'0')}-${String(lastSun.getDate()).padStart(2,'0')}`;
+  // ── Dynamic Points Calculation ──────────────────────────────────────────────
+  // Helper: compute pts for a member on a specific date range from allCompletions
+  // 1 pt per core section fully completed that day + bonus task pts earned
+  function computePtsForMember(memberId, fromDateStr, toDateStr) {
     const memberComps = (allCompletions||[]).filter(c =>
-      c.member_id === activeMember.id &&
-      c.completed_date >= lastMonStr &&
-      c.completed_date <= lastSunStr
+      c.member_id === memberId &&
+      c.completed_date >= fromDateStr &&
+      c.completed_date <= toDateStr
     );
-    const seen = new Set();
+    // Group completions by date
+    const byDate = {};
     memberComps.forEach(c => {
-      const memberTasks = tasks[activeMember.id] || {};
-      for (const sec of ["learn","exercise","contribute","goals","bonus","open"]) {
-        if ((memberTasks[sec]||[]).some(t => t.label === c.task_label)) {
-          seen.add(`${c.completed_date}|${sec}`);
+      if (!byDate[c.completed_date]) byDate[c.completed_date] = [];
+      byDate[c.completed_date].push(c.task_label);
+    });
+
+    const memberTasks = tasks[memberId] || {};
+    let total = 0;
+
+    Object.entries(byDate).forEach(([date, completedLabels]) => {
+      // 1 pt per core section where ALL tasks for that section are completed
+      for (const sec of CORE_SECTIONS) {
+        const secTasks = (memberTasks[sec]||[]);
+        if (secTasks.length > 0 && secTasks.every(t => completedLabels.includes(t.label))) {
+          total += 1;
+        }
+      }
+      // Bonus tasks: add bonusPoints per completed bonus task
+      for (const t of (memberTasks.bonus||[])) {
+        if (completedLabels.includes(t.label)) {
+          total += (t.bonusPoints || 1);
+        }
+      }
+      // High-value chores: monthly/quarterly/semi-annual/annual = 5 pts each when completed
+      const HIGH_VALUE_CHORES = new Set([
+        ...MONTHLY_CHORES, ...QUARTERLY_CHORES, ...SEMI_ANNUAL_CHORES, ...ANNUAL_CHORES
+      ]);
+      for (const label of completedLabels) {
+        if (HIGH_VALUE_CHORES.has(label)) {
+          total += 5;
         }
       }
     });
-    return seen.size;
+
+    return total;
+  }
+
+  // Today's pts
+  const todayStr = getMountainToday().toISOString().slice(0,10);
+  const todayPts = computePtsForMember(activeMember.id, todayStr, todayStr);
+
+  // This week's pts (Mon–today)
+  const wPts = (() => {
+    const now = getMountainToday();
+    const dow = now.getDay();
+    const daysToMon = (dow + 6) % 7;
+    const mon = new Date(now); mon.setDate(now.getDate() - daysToMon);
+    const monStr = mon.toISOString().slice(0,10);
+    return computePtsForMember(activeMember.id, monStr, todayStr);
+  })();
+
+  // Last week's pts (Mon–Sun of prior week)
+  const lastWeekPts = (() => {
+    const now = getMountainToday();
+    const dow = now.getDay();
+    const daysToLastMon = ((dow + 6) % 7) + 7;
+    const lastMon = new Date(now); lastMon.setDate(now.getDate() - daysToLastMon);
+    const lastSun = new Date(lastMon); lastSun.setDate(lastMon.getDate() + 6);
+    const lastMonStr = lastMon.toISOString().slice(0,10);
+    const lastSunStr = lastSun.toISOString().slice(0,10);
+    return computePtsForMember(activeMember.id, lastMonStr, lastSunStr);
   })();
 
   const earnedBadges = getEarnedBadges(activeMember.id);
@@ -2798,7 +2896,7 @@ function AppInner() {
       {screensaverEl}
       <TopBar onAdmin={goAdmin} />
       {page==="calendar" && <CalendarPage family={family} events={events} />}
-      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments}
+      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} allCompletions={allCompletions}
         onRainbowDay={(memberId, dateStr) => {
           SB.logRainbowDay(memberId, dateStr);
           SB.getRainbowDays().then(r => setRainbowDays(r||[]));
