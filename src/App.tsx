@@ -854,7 +854,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
   );
 }
 
-function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, allCompletions }) {
+function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, allCompletions, onCompletionChange }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
   // Task completions loaded from Supabase per day (moved after viewDate)
@@ -895,6 +895,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, all
 
   async function toggleTask(memberId, secId, taskLabel, currentlyDone) {
     await toggleCompletion(taskLabel, memberId, currentlyDone);
+    if (onCompletionChange) onCompletionChange();
   }
 
   const activeMembers = family.filter(m => visible[m.id]);
@@ -1284,7 +1285,7 @@ function GoalsQuadrant({ family, goals, setGoals, dbGoalRows, activeMember }) {
   );
 }
 
-function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, allCompletions, tasks, dbGoalRows }) {
+function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, allCompletions, tasks, dbGoalRows, choreAssignments }) {
   const [activeMember, setActiveMember] = useState(family[0]);
 
   // ── Real Badge Engine ─────────────────────────────────────────────────────
@@ -1397,8 +1398,9 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
   const streak  = streaks[activeMember.id]  || 0;
 
   // ── Dynamic Points Calculation ──────────────────────────────────────────────
-  // Helper: compute pts for a member on a specific date range from allCompletions
-  // 1 pt per core section fully completed that day + bonus task pts earned
+  // 1 pt per core section fully completed that day + bonus task pts + 5 pts per high-value chore
+  const HIGH_VALUE_SET = new Set([...MONTHLY_CHORES, ...QUARTERLY_CHORES, ...SEMI_ANNUAL_CHORES, ...ANNUAL_CHORES]);
+
   function computePtsForMember(memberId, fromDateStr, toDateStr) {
     const memberComps = (allCompletions||[]).filter(c =>
       c.member_id === memberId &&
@@ -1415,32 +1417,47 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     const memberTasks = tasks[memberId] || {};
     let total = 0;
 
-    Object.entries(byDate).forEach(([date, completedLabels]) => {
-      // 1 pt per core section where ALL tasks for that section are completed
-      for (const sec of CORE_SECTIONS) {
-        const secTasks = (memberTasks[sec]||[]);
-        if (secTasks.length > 0 && secTasks.every(t => completedLabels.includes(t.label))) {
-          total += 1;
-        }
-      }
+    Object.entries(byDate).forEach(([dateStr, completedLabels]) => {
+      // Build what tasks were actually scheduled for this specific date
+      const dateParts = dateStr.split("-");
+      const dateObj = new Date(+dateParts[0], +dateParts[1]-1, +dateParts[2]);
+
+      // Contribute: use actual chore schedule for that date (not tasks table)
+      const scheduledChores = getContributeTasksForMember(memberId, dateObj, choreAssignments || {});
+      const contributeComplete = scheduledChores.length > 0 &&
+        scheduledChores.every(t => completedLabels.includes(t.label));
+
+      // Learn / Exercise / Goals: check tasks table (filtered for that date's recurrence)
+      const learnTasks   = (memberTasks.learn   || []).filter(t => taskActiveOnDate(t, dateObj));
+      const exerciseTasks= (memberTasks.exercise|| []).filter(t => taskActiveOnDate(t, dateObj));
+      const goalsTasks   = (memberTasks.goals   || []).filter(t => taskActiveOnDate(t, dateObj));
+
+      if (learnTasks.length    > 0 && learnTasks.every(t    => completedLabels.includes(t.label))) total += 1;
+      if (exerciseTasks.length > 0 && exerciseTasks.every(t => completedLabels.includes(t.label))) total += 1;
+      if (goalsTasks.length    > 0 && goalsTasks.every(t    => completedLabels.includes(t.label))) total += 1;
+      if (contributeComplete) total += 1;
+
       // Bonus tasks: add bonusPoints per completed bonus task
       for (const t of (memberTasks.bonus||[])) {
-        if (completedLabels.includes(t.label)) {
-          total += (t.bonusPoints || 1);
-        }
+        if (completedLabels.includes(t.label)) total += (t.bonusPoints || 1);
       }
-      // High-value chores: monthly/quarterly/semi-annual/annual = 5 pts each when completed
-      const HIGH_VALUE_CHORES = new Set([
-        ...MONTHLY_CHORES, ...QUARTERLY_CHORES, ...SEMI_ANNUAL_CHORES, ...ANNUAL_CHORES
-      ]);
+
+      // High-value chores: 5 pts each when completed (in addition to section pt)
       for (const label of completedLabels) {
-        if (HIGH_VALUE_CHORES.has(label)) {
-          total += 5;
-        }
+        if (HIGH_VALUE_SET.has(label)) total += 5;
       }
     });
 
     return total;
+  }
+
+  // Helper: was a task active (by recurrence) on a given date?
+  function taskActiveOnDate(t, dateObj) {
+    const dateStr = `${dateObj.getFullYear()}-${String(dateObj.getMonth()+1).padStart(2,'0')}-${String(dateObj.getDate()).padStart(2,'0')}`;
+    if (!t.recurrence || t.recurrence === "daily") return true;
+    if (t.recurrence === "weekly") return (t.dows||[]).includes(dateObj.getDay());
+    if (t.recurrence === "once") return t.specificDate === dateStr;
+    return true;
   }
 
   // Today's pts
@@ -2902,13 +2919,18 @@ function AppInner() {
       <TopBar onAdmin={goAdmin} />
       {page==="calendar" && <CalendarPage family={family} events={events} />}
       {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} allCompletions={allCompletions}
+        onCompletionChange={() => {
+          sb("task_completions", "GET", null,
+            `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
+          ).then(rows => setAllCompletions(rows || []));
+        }}
         onRainbowDay={(memberId, dateStr) => {
           SB.logRainbowDay(memberId, dateStr);
           SB.getRainbowDays().then(r => setRainbowDays(r||[]));
         }} />}
       {page==="progress" && <ProgressPage family={family} goals={goals} setGoals={setGoals}
         streaks={streaks} weekPts={weekPts} rainbowDays={rainbowDays}
-        allCompletions={allCompletions} tasks={tasks} dbGoalRows={dbGoalRows} />}
+        allCompletions={allCompletions} tasks={tasks} dbGoalRows={dbGoalRows} choreAssignments={choreAssignments} />}
       <BottomNav page={page} onPage={setPage} />
     </div>
   );
