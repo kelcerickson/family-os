@@ -840,8 +840,8 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
                     </div>
                     <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600, color: task.done?sec.color:T.text, textDecoration: task.done?"line-through":"none", lineHeight:1.35 }}>{task.label}</span>
                     {task.carriedOver && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:10, fontWeight:700, color:"#FF9F45", background:"#FFF0E0", borderRadius:99, padding:"1px 6px", flexShrink:0 }}>yesterday</span>}
-                    {task.highValue && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:"#7C3AED", background:"#F3E8FF", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>+5 pts</span>}
-                    {task.bonusPoints > 0 && !task.highValue && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:"#92700A", background:"#FFFBE6", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>+{task.bonusPoints}pt</span>}
+                    {task.highValue && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color: task.done?"#9CA3AF":"#7C3AED", background: task.done?"#F3F4F6":"#F3E8FF", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>{task.done ? "✓ +5 pts" : "+5 pts"}</span>}
+                    {task.bonusPoints > 0 && !task.highValue && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color: task.done?"#9CA3AF":"#92700A", background: task.done?"#F3F4F6":"#FFFBE6", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>{task.done ? `✓ +${task.bonusPoints}pt` : `+${task.bonusPoints}pt`}</span>}
                   </div>
                 ))}
                 {!done && <div style={{ textAlign:"center", marginTop:6, fontFamily:"'Nunito',sans-serif", fontSize:10, color:T.muted }}>Complete all to earn <span style={{ fontWeight:800, color:sec.color }}>+1 pt</span></div>}
@@ -969,11 +969,16 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, all
                 const todayChores = choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute || []);
 
                 // Tag high-value chores (monthly/quarterly/semi-annual/annual) with 5 bonus pts
+                // Use the freq field already set by getChoresForDate, plus HIGH_VALUE set as backup
                 const HIGH_VALUE = new Set([...MONTHLY_CHORES, ...QUARTERLY_CHORES, ...SEMI_ANNUAL_CHORES, ...ANNUAL_CHORES]);
+                const isHighValue = (t) => {
+                  const freqMatch = t.freq && ["monthly","quarterly","semi-annual","annual"].includes(t.freq);
+                  return freqMatch || HIGH_VALUE.has(t.label);
+                };
                 const taggedToday = todayChores.map(t => ({
                   ...t,
-                  bonusPoints: HIGH_VALUE.has(t.label) ? 5 : 0,
-                  highValue: HIGH_VALUE.has(t.label),
+                  bonusPoints: isHighValue(t) ? 5 : 0,
+                  highValue: isHighValue(t),
                 }));
 
                 // Carry over any unfinished chores from yesterday
