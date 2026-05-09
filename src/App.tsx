@@ -44,8 +44,14 @@ const SB = {
   addEvent:    (ev) => sb("cal_events", "POST", {
     title: ev.title, member_ids: ev.memberIds, start_h: ev.startH, dur: ev.dur,
     recurrence: ev.recurrence || "weekly",
-    // For monthly events, encode the occurrence week as a negative number at end of dows
-    // e.g. [5, -2] = 2nd Friday. For weekly, just store the days normally.
+    dows: ev.recurrence === "monthly"
+      ? [...(ev.dows || [ev.dow||1]), -(ev.monthlyWeek ?? 1)]
+      : (ev.dows || [ev.dow||1]),
+    specific_date: ev.recurrence === "once" ? (ev.specificDate || null) : null,
+  }),
+  updateEvent: (id, ev) => sb(`cal_events?id=eq.${id}`, "PATCH", {
+    title: ev.title, member_ids: ev.memberIds, start_h: ev.startH, dur: ev.dur,
+    recurrence: ev.recurrence || "weekly",
     dows: ev.recurrence === "monthly"
       ? [...(ev.dows || [ev.dow||1]), -(ev.monthlyWeek ?? 1)]
       : (ev.dows || [ev.dow||1]),
@@ -1737,6 +1743,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   const EMPTY_FORM = { title:"", memberIds:[], startH:9, dur:1, recurrence:"weekly", dows:[1], specificDate:"", monthlyWeek:1 };
   const [form, setForm] = useState(EMPTY_FORM);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null); // id of event being edited, null = adding new
   const [showOAuthGuide, setShowOAuthGuide] = useState(null);
   const [connectedMembers, setConnectedMembers] = useState([]);
 
@@ -1756,17 +1763,53 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   }, []);
   const DOW_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
-  async function addEvent() {
+  function startEdit(ev) {
+    setForm({
+      title:       ev.title,
+      memberIds:   ev.memberIds,
+      startH:      ev.startH,
+      dur:         ev.dur,
+      recurrence:  ev.recurrence,
+      dows:        ev.dows || [ev.dow || 1],
+      specificDate: ev.specificDate || "",
+      monthlyWeek: ev.monthlyWeek || 1,
+    });
+    setEditingId(ev.id);
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function cancelForm() {
+    setShowForm(false);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+  }
+
+  async function saveEvent() {
     if (!form.title || form.memberIds.length===0) return;
     if (form.recurrence === "once" && !form.specificDate) return;
     if ((form.recurrence === "weekly" || form.recurrence === "monthly") && (!form.dows || form.dows.length === 0)) return;
-    const rows = await SB.addEvent({ ...form, monthlyWeek: form.monthlyWeek ?? 1 });
-    if (rows) {
-      setEvents(prev => [...prev, ...dbEventsToApp(rows)]);
-      setForm(EMPTY_FORM);
-      setShowForm(false);
+
+    if (editingId) {
+      // Update existing event
+      const result = await SB.updateEvent(editingId, { ...form, monthlyWeek: form.monthlyWeek ?? 1 });
+      if (result !== null) {
+        // Re-fetch to get the updated row back
+        const allRows = await SB.getEvents();
+        if (allRows) setEvents(dbEventsToApp(allRows));
+        cancelForm();
+      } else {
+        alert("Failed to update event — check the browser console for details.");
+      }
     } else {
-      alert("Failed to save event — check the browser console for details.");
+      // Add new event
+      const rows = await SB.addEvent({ ...form, monthlyWeek: form.monthlyWeek ?? 1 });
+      if (rows) {
+        setEvents(prev => [...prev, ...dbEventsToApp(rows)]);
+        cancelForm();
+      } else {
+        alert("Failed to save event — check the browser console for details.");
+      }
     }
   }
 
@@ -1824,7 +1867,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
         <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:0 }}>📅 Calendar Events</h2>
-        <button onClick={() => setShowForm(!showForm)} style={{ background:T.text, color:"#fff", border:"none", borderRadius:12, padding:"10px 20px", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, cursor:"pointer" }}>+ Add Event</button>
+        <button onClick={() => { setEditingId(null); setForm(EMPTY_FORM); setShowForm(!showForm); }} style={{ background:T.text, color:"#fff", border:"none", borderRadius:12, padding:"10px 20px", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, cursor:"pointer" }}>+ Add Event</button>
       </div>
 
       {/* OAuth Setup Cards */}
@@ -1921,8 +1964,8 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
 
       {/* Add Event Form */}
       {showForm && (
-        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px 20px", marginBottom:20 }}>
-          <h3 style={{ fontSize:17, fontWeight:700, color:T.text, margin:"0 0 14px" }}>New Event</h3>
+        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${editingId?"#3B6FA0":T.border}`, padding:"18px 20px", marginBottom:20 }}>
+          <h3 style={{ fontSize:17, fontWeight:700, color: editingId?"#3B6FA0":T.text, margin:"0 0 14px" }}>{editingId ? "✏️ Edit Event" : "New Event"}</h3>
 
           {/* Title */}
           <div style={{ marginBottom:12 }}>
@@ -2059,8 +2102,8 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
           </div>
 
           <div style={{ display:"flex", gap:10 }}>
-            <button onClick={addEvent} style={{ flex:1, padding:"12px", borderRadius:12, background:T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>Add to Calendar</button>
-            <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, cursor:"pointer" }}>Cancel</button>
+            <button onClick={saveEvent} style={{ flex:1, padding:"12px", borderRadius:12, background: editingId?"#3B6FA0":T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>{editingId ? "Save Changes" : "Add to Calendar"}</button>
+            <button onClick={cancelForm} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, cursor:"pointer" }}>Cancel</button>
           </div>
         </div>
       )}
@@ -2082,7 +2125,8 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
               <div style={{ background: recTag==="One-time"?"#F3E5FF":recTag==="Daily"?"#D5EEE2":recTag==="Monthly"?"#FDEEDE":"#D6E8F7", color: recTag==="One-time"?"#7C5C9E":recTag==="Daily"?"#2D7A56":recTag==="Monthly"?"#D4732A":"#3B6FA0", borderRadius:99, padding:"3px 9px", fontSize:11, fontWeight:700, fontFamily:"'Fredoka',sans-serif", flexShrink:0 }}>
                 {recTag}
               </div>
-              <button onClick={async () => { await SB.deleteEvent(ev.id); setEvents(prev=>prev.filter(e=>e.id!==ev.id)); }} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
+              <button onClick={() => startEdit(ev)} style={{ padding:"6px 12px", borderRadius:8, background:"#D6E8F7", color:"#3B6FA0", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer", flexShrink:0 }}>Edit</button>
+              <button onClick={async () => { await SB.deleteEvent(ev.id); setEvents(prev=>prev.filter(e=>e.id!==ev.id)); }} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer", flexShrink:0 }}>Remove</button>
             </div>
           );
         })}
