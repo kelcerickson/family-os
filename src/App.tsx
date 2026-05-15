@@ -766,12 +766,12 @@ function CalendarPage({ family, events }) {
 // PAGE 2 — TODAY
 // ════════════════════════════════════════════════════════════════════════════
 function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowDay, viewDate }) {
-  // Rainbow day: earned when all sections that HAVE tasks are fully completed
-  // Sections with no tasks are skipped (e.g. empty Learn still allows rainbow)
-  const sectionsWithTasks = CORE_SECTIONS.filter(sec => (tasks[sec.id] || []).length > 0);
+  // Rainbow day: earned when all CORE sections that HAVE tasks are fully completed
+  // CORE_SECTIONS = ["learn","exercise","contribute","goals"] — plain strings
+  const sectionsWithTasks = CORE_SECTIONS.filter(sec => (tasks[sec] || []).length > 0);
   const hasAnyCoreTasks = sectionsWithTasks.length > 0;
   const allSectionsWithTasksDone = sectionsWithTasks.every(sec =>
-    (tasks[sec.id] || []).every(t => !!(completions && completions[t.label + "|" + member.id]))
+    (tasks[sec] || []).every(t => !!(completions && completions[t.label + "|" + member.id]))
   );
   const isRainbow = hasAnyCoreTasks && allSectionsWithTasksDone;
 
@@ -789,7 +789,15 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
   const doneItems = allTaskItems.filter(t => !!(completions && completions[t.label + "|" + member.id])).length;
 
   return (
-    <div style={{ minWidth:0, flex:"1 1 0%", display:"flex", flexDirection:"column", borderRight:`2px solid ${T.border}`, background: isRainbow ? RAINBOW_SOFT : T.bg, transition:"background 0.8s ease" }}>
+    <div style={{ minWidth:0, flex:"1 1 0%", display:"flex", flexDirection:"column", borderRight:`2px solid ${T.border}`, background: isRainbow ? RAINBOW_SOFT : T.bg, transition:"background 0.8s ease", position:"relative", overflow:"hidden" }}>
+      {/* Rainbow shimmer overlay when earned */}
+      {isRainbow && (
+        <div style={{ position:"absolute", inset:0, pointerEvents:"none", zIndex:0,
+          background:"linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.22) 50%, rgba(255,255,255,0.08) 100%)",
+          animation:"shimmer 2.5s ease-in-out infinite",
+        }} />
+      )}
+      <style>{`@keyframes shimmer{0%,100%{opacity:0.5}50%{opacity:1}} @keyframes bounce{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}`}</style>
       <div style={{ padding:"10px 10px 8px", flexShrink:0, position:"sticky", top:0, zIndex:5, backgroundImage: isRainbow?RAINBOW_GRAD:"none", background: isRainbow?undefined:T.white, borderBottom:`2px solid ${isRainbow?"transparent":T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
           <div style={{ width:36, height:36, borderRadius:"50%", background: isRainbow?"rgba(255,255,255,0.35)":member.light, border:`2.5px solid ${isRainbow?"rgba(255,255,255,0.8)":member.color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>{member.emoji}</div>
@@ -797,7 +805,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
             <div style={{ fontFamily:"'Fredoka',sans-serif", fontWeight:700, fontSize:16, color: isRainbow?T.white:T.text, lineHeight:1 }}>{member.name}</div>
             <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, color: isRainbow?"rgba(255,255,255,0.85)":T.muted, marginTop:1 }}>{doneItems}/{totalItems} done · ⭐ {points} pts</div>
           </div>
-          {isRainbow && <span style={{ fontSize:22 }}>🌈</span>}
+          {isRainbow && <span style={{ fontSize:26, animation:"bounce 1s ease-in-out infinite", display:"inline-block" }}>🌈</span>}
         </div>
         <div style={{ background: isRainbow?"rgba(255,255,255,0.3)":T.stone, borderRadius:99, height:10, overflow:"hidden", boxShadow:"inset 0 1px 3px rgba(0,0,0,0.1)" }}>
           <div style={{ width:`${totalItems?(doneItems/totalItems)*100:0}%`, height:"100%", borderRadius:99, background: isRainbow?"#fff":member.color, transition:"width 0.4s ease", boxShadow:`0 1px 4px ${member.color}88` }} />
@@ -809,6 +817,17 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
           })}
         </div>
       </div>
+      {/* Rainbow Day celebration banner */}
+      {isRainbow && (
+        <div style={{ margin:"10px 8px 0", borderRadius:14, padding:"12px 14px", zIndex:1, position:"relative",
+          background:"rgba(255,255,255,0.88)", backdropFilter:"blur(4px)",
+          border:"2px solid rgba(255,255,255,0.9)", boxShadow:"0 4px 20px rgba(0,0,0,0.12)",
+          textAlign:"center" }}>
+          <div style={{ fontSize:26, marginBottom:4 }}>🌈✨🎉</div>
+          <div style={{ fontFamily:"'Fredoka',sans-serif", fontWeight:700, fontSize:16, color:"#1e1e2e" }}>Rainbow Day!</div>
+          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:"#555", marginTop:2 }}>{member.name} completed everything today!</div>
+        </div>
+      )}
       <div style={{ flex:1, overflowY:"scroll", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
         {SECTIONS.map(sec => {
           const isBonus = sec.id === "bonus";
@@ -905,7 +924,35 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, all
   }
 
   const activeMembers = family.filter(m => visible[m.id]);
-  const allKidsRainbow = family.filter(m => m.defaultOn).every(m => allSectionsDone(taskState[m.id]||{}));
+
+  // Compute rainbow state for each member from live completions + mergedTasks
+  // (taskState is not reliably populated; completions is the source of truth)
+  function isMemberRainbow(memberId) {
+    const choreTasks = getContributeTasksForMember(memberId, viewDate, choreAssignments);
+    const dbMemberTasks = dbTasks[memberId] || {};
+    const dateStr = `${viewDate.getFullYear()}-${String(viewDate.getMonth()+1).padStart(2,'0')}-${String(viewDate.getDate()).padStart(2,'0')}`;
+    function filterByDate(list) {
+      return (list||[]).filter(t => {
+        if (!t.recurrence || t.recurrence === "daily") return true;
+        if (t.recurrence === "weekly") return (t.dows||[]).includes(viewDate.getDay());
+        if (t.recurrence === "once") return t.specificDate === dateStr;
+        return true;
+      });
+    }
+    const memberTasks = {
+      learn:      filterByDate(dbMemberTasks.learn),
+      exercise:   filterByDate(dbMemberTasks.exercise),
+      contribute: choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute),
+      goals:      filterByDate(dbMemberTasks.goals),
+    };
+    const coreSecs = CORE_SECTIONS.filter(s => (memberTasks[s]||[]).length > 0);
+    if (coreSecs.length === 0) return false;
+    return coreSecs.every(s =>
+      (memberTasks[s]||[]).every(t => !!(completions && completions[t.label + "|" + memberId]))
+    );
+  }
+
+  const allKidsRainbow = family.filter(m => m.defaultOn).every(m => isMemberRainbow(m.id));
 
   return (
     <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", touchAction:"pan-y", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
@@ -919,7 +966,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, all
         <div style={{ display:"flex", gap:6, overflowX:"auto" }}>
           {family.map(m => {
             const on = visible[m.id];
-            const rainbow = allSectionsDone(taskState[m.id]||{});
+            const rainbow = isMemberRainbow(m.id);
             return (
               <button key={m.id} onClick={() => setVisible(v => ({...v,[m.id]:!v[m.id]}))}
                 style={{ display:"flex", alignItems:"center", gap:5, padding:"6px 12px", borderRadius:99, flexShrink:0, cursor:"pointer", transition:"all 0.15s", background: on?m.light:T.stone, border: on?`2px solid ${m.color}`:"2px solid transparent" }}>
