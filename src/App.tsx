@@ -2220,8 +2220,17 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
       ? (WEEKLY_CHORES[dow] || [])
       : (FREQ_GROUPS.find(f => f.id === freqId)?.chores || []);
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const custom = customChores[key] || [];
-    return [...base, ...custom];
+    const custom = (customChores[key] || []);
+    const renames = customChores._renames || {};
+    // Apply renames to built-in chores, and filter out any built-ins that were renamed
+    // (they'll appear under their new name via the renames map)
+    const renamedBuiltIns = Object.keys(renames)
+      .filter(k => k.startsWith(key + "|"))
+      .map(k => k.slice((key + "|").length));
+    const resolvedBase = base
+      .filter(c => !renamedBuiltIns.includes(c)) // remove original
+      .concat(renamedBuiltIns.map(c => renames[key + "|" + c])); // add renamed version
+    return [...resolvedBase, ...custom];
   }
 
   function addCustomChore() {
@@ -2234,25 +2243,53 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
   }
 
   function renameChore(oldLabel, newLabel, freqId, dow) {
-    if (!newLabel.trim() || newLabel === oldLabel) { setEditingChore(null); return; }
-    // Rename in assignments
+    const trimmed = newLabel.trim();
+    if (!trimmed || trimmed === oldLabel) { setEditingChore(null); return; }
+    const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
+    const custom = customChores[key] || [];
+
+    // Whether it's a built-in or custom chore, store the rename in customChores
+    // by replacing the old label with the new one (or adding if not present)
+    const existingIdx = custom.indexOf(oldLabel);
+    let nextCustom;
+    if (existingIdx >= 0) {
+      // It's already a custom chore — just rename it in the array
+      nextCustom = custom.map((c, i) => i === existingIdx ? trimmed : c);
+    } else {
+      // It's a built-in chore — store a rename entry so getChorelist returns the new name
+      // We store it as a special "rename:<old>:<new>" sentinel, or simpler:
+      // store the renamed chore in a separate renames map in customChores
+      const renames = customChores._renames || {};
+      const nextRenames = { ...renames, [key + "|" + oldLabel]: trimmed };
+      const nextCustomChores = { ...customChores, _renames: nextRenames };
+      // Also rename in assignments
+      setChoreAssignments(prev => {
+        const next = { ...prev };
+        if (next[oldLabel] !== undefined) {
+          next[trimmed] = next[oldLabel];
+          delete next[oldLabel];
+          SB.upsertChore(trimmed, next[trimmed]);
+          SB.upsertChore(oldLabel, []); // clear old assignment
+        }
+        return next;
+      });
+      saveCustomChores(nextCustomChores);
+      setEditingChore(null);
+      return;
+    }
+
+    const nextCustomChores = { ...customChores, [key]: nextCustom };
+    // Also rename in assignments
     setChoreAssignments(prev => {
       const next = { ...prev };
       if (next[oldLabel] !== undefined) {
-        next[newLabel] = next[oldLabel];
+        next[trimmed] = next[oldLabel];
         delete next[oldLabel];
-        SB.upsertChore(newLabel, next[newLabel]);
+        SB.upsertChore(trimmed, next[trimmed]);
       }
       return next;
     });
-    // Rename in custom chores
-    const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const custom = customChores[key] || [];
-    const idx = custom.indexOf(oldLabel);
-    if (idx >= 0) {
-      const next = { ...customChores, [key]: custom.map((c,i) => i===idx ? newLabel.trim() : c) };
-      saveCustomChores(next);
-    }
+    saveCustomChores(nextCustomChores);
     setEditingChore(null);
   }
 
@@ -2373,10 +2410,11 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
                   {isEditing ? (
                     <input
                       autoFocus
-                      defaultValue={chore}
-                      onBlur={e => renameChore(chore, e.target.value, activeFreq, activeDow)}
+                      value={editingChore.newLabel ?? chore}
+                      onChange={e => setEditingChore(ec => ({ ...ec, newLabel: e.target.value }))}
+                      onBlur={e => renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow)}
                       onKeyDown={e => {
-                        if (e.key === "Enter") renameChore(chore, e.target.value, activeFreq, activeDow);
+                        if (e.key === "Enter") renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow);
                         if (e.key === "Escape") setEditingChore(null);
                       }}
                       style={{ width:"100%", padding:"4px 8px", borderRadius:8, border:`2px solid ${freq.color}`, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, boxSizing:"border-box" }}
