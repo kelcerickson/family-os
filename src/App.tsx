@@ -2222,15 +2222,25 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
     const custom = (customChores[key] || []);
     const renames = customChores._renames || {};
-    // Apply renames to built-in chores, and filter out any built-ins that were renamed
-    // (they'll appear under their new name via the renames map)
+    const hidden  = new Set(customChores._hidden  || []);
+
+    // Apply renames to built-in chores
     const renamedBuiltIns = Object.keys(renames)
       .filter(k => k.startsWith(key + "|"))
       .map(k => k.slice((key + "|").length));
+
     const resolvedBase = base
-      .filter(c => !renamedBuiltIns.includes(c)) // remove original
-      .concat(renamedBuiltIns.map(c => renames[key + "|" + c])); // add renamed version
-    return [...resolvedBase, ...custom];
+      .filter(c => !renamedBuiltIns.includes(c) && !hidden.has(key + "|" + c))
+      .concat(
+        renamedBuiltIns
+          .filter(c => !hidden.has(key + "|" + c))
+          .map(c => renames[key + "|" + c])
+      );
+
+    // Merge, dedup (custom chores might accidentally duplicate a built-in name)
+    const seen = new Set(resolvedBase);
+    const dedupedCustom = custom.filter(c => !hidden.has(key + "|" + c) && !seen.has(c));
+    return [...resolvedBase, ...dedupedCustom];
   }
 
   function addCustomChore() {
@@ -2296,14 +2306,43 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
   function deleteChore(label, freqId, dow) {
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
     const custom = customChores[key] || [];
+    const renames = customChores._renames || {};
+
+    // Find if this label is a renamed built-in (value in _renames)
+    const renameEntry = Object.entries(renames).find(([k, v]) => k.startsWith(key + "|") && v === label);
+    // Find if this label is a plain built-in (in base arrays)
+    const base = freqId === "weekly"
+      ? (WEEKLY_CHORES[dow] || [])
+      : (FREQ_GROUPS.find(f => f.id === freqId)?.chores || []);
+    const isBuiltIn = base.includes(label) || !!renameEntry;
+
+    let nextCustom = { ...customChores };
+
     if (custom.includes(label)) {
-      const next = { ...customChores, [key]: custom.filter(c => c !== label) };
-      saveCustomChores(next);
+      // It's a plain custom chore — remove from list
+      nextCustom = { ...nextCustom, [key]: custom.filter(c => c !== label) };
     }
+    if (renameEntry) {
+      // It's a renamed built-in — clear the rename entry and hide the original
+      const nextRenames = { ...renames };
+      delete nextRenames[renameEntry[0]];
+      const originalLabel = renameEntry[0].slice((key + "|").length);
+      const hidden = [...(customChores._hidden || []), key + "|" + originalLabel];
+      nextCustom = { ...nextCustom, _renames: nextRenames, _hidden: hidden };
+    }
+    if (isBuiltIn && !renameEntry) {
+      // It's a plain built-in — add to hidden list
+      const hidden = [...(customChores._hidden || []), key + "|" + label];
+      nextCustom = { ...nextCustom, _hidden: hidden };
+    }
+
+    saveCustomChores(nextCustom);
+
     // Remove from assignments
     setChoreAssignments(prev => {
       const next = { ...prev };
       delete next[label];
+      SB.upsertChore(label, []);
       return next;
     });
   }
@@ -2448,11 +2487,9 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
                   );
                 })}
 
-                {/* Actions: delete (custom only) */}
+                {/* Actions: delete any chore */}
                 <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
-                  {isCustom && (
-                    <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
-                  )}
+                  <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
                 </div>
               </div>
             );
