@@ -43,19 +43,8 @@ const SB = {
   getEvents:   () => sb("cal_events", "GET", null, "?order=created_at"),
   addEvent:    (ev) => sb("cal_events", "POST", {
     title: ev.title, member_ids: ev.memberIds, start_h: ev.startH, dur: ev.dur,
-    recurrence: ev.recurrence || "weekly",
-    dows: ev.recurrence === "monthly"
-      ? [...(ev.dows || [ev.dow||1]), -(ev.monthlyWeek ?? 1)]
-      : (ev.dows || [ev.dow||1]),
-    specific_date: ev.recurrence === "once" ? (ev.specificDate || null) : null,
-  }),
-  updateEvent: (id, ev) => sb(`cal_events?id=eq.${id}`, "PATCH", {
-    title: ev.title, member_ids: ev.memberIds, start_h: ev.startH, dur: ev.dur,
-    recurrence: ev.recurrence || "weekly",
-    dows: ev.recurrence === "monthly"
-      ? [...(ev.dows || [ev.dow||1]), -(ev.monthlyWeek ?? 1)]
-      : (ev.dows || [ev.dow||1]),
-    specific_date: ev.recurrence === "once" ? (ev.specificDate || null) : null,
+    recurrence: ev.recurrence || "weekly", dows: ev.dows || [ev.dow||1],
+    specific_date: ev.specificDate || null,
   }),
   deleteEvent: (id) => sb(`cal_events?id=eq.${id}`, "DELETE"),
 
@@ -118,26 +107,17 @@ const SB = {
 
 // Convert DB rows to app format
 function dbEventsToApp(rows) {
-  return (rows||[]).map(r => {
-    const rawDows = r.dows || [1];
-    // For monthly events, the occurrence week is encoded as a negative number in dows
-    const negIdx = rawDows.findIndex(d => d < 0);
-    const monthlyWeek = negIdx >= 0 ? Math.abs(rawDows[negIdx]) : 1;
-    const dows = rawDows.filter(d => d >= 0);
-    return {
-      id: r.id, title: r.title, memberIds: r.member_ids,
-      startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
-      dows, dow: dows[0] ?? 1,
-      specificDate: r.specific_date || null,
-      monthlyWeek,
-    };
-  });
+  return (rows||[]).map(r => ({
+    id: r.id, title: r.title, memberIds: r.member_ids,
+    startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
+    dows: r.dows, specificDate: r.specific_date, dow: (r.dows||[1])[0],
+  }));
 }
 function dbTasksToApp(rows) {
   const result = {};
   (rows||[]).forEach(r => {
-    if (!result[r.member_id]) result[r.member_id] = { learn:[], exercise:[], contribute:[], goals:[], bonus:[], open:[] };
-    if (result[r.member_id][r.section] !== undefined) result[r.member_id][r.section].push({
+    if (!result[r.member_id]) result[r.member_id] = { learn:[], exercise:[], contribute:[], goals:[] };
+    if (result[r.member_id][r.section]) result[r.member_id][r.section].push({
       id: r.id, label: r.label, done: false,
       recurrence: r.recurrence || "daily",
       dows: (r.recurrence === "weekly" && r.dows) ? r.dows : null,
@@ -298,73 +278,41 @@ const ANNUAL_CHORES = [
 const INIT_CHORE_ASSIGNMENTS = {};
 
 // Helper: get chores for a specific date
-function getChoresForDate(date, choreAssignments) {
-  const dow = date.getDay(); // 0=Sun
-  const day = date.getDate();
-  const month = date.getMonth();
+function getChoresForDate(date, choreAssignments, customChores) {
+  const dow = date.getDay();
+  const cc = customChores || {};
+  const renames = cc._renames || {};
+  const hidden = new Set(cc._hidden || []);
 
-  // Load custom chores from localStorage
-  let customChores = {};
-  try { customChores = JSON.parse(localStorage.getItem("familyos_customChores") || "{}"); } catch {}
+  function isFirstThursday(d) { return d.getDay() === 4 && d.getDate() <= 7; }
+  function isFirstThursdayOfQuarter(d) { return isFirstThursday(d) && [0,3,6,9].includes(d.getMonth()); }
+  function isFirstThursdayOfSemiAnnual(d) { return isFirstThursday(d) && [0,6].includes(d.getMonth()); }
+  function isFirstThursdayOfYear(d) { return isFirstThursday(d) && d.getMonth() === 0; }
 
-  // Is it the 1st Thursday of the month?
-  function isFirstThursday(d) {
-    return d.getDay() === 4 && d.getDate() <= 7;
-  }
-  // Is it the 1st Thursday of a quarter? (Jan, Apr, Jul, Oct)
-  function isFirstThursdayOfQuarter(d) {
-    return isFirstThursday(d) && [0,3,6,9].includes(d.getMonth());
-  }
-  // Is it the 1st Thursday of semi-annual? (Jan, Jul)
-  function isFirstThursdayOfSemiAnnual(d) {
-    return isFirstThursday(d) && [0,6].includes(d.getMonth());
-  }
-  // Is it Jan 1st Thursday (annual)?
-  function isFirstThursdayOfYear(d) {
-    return isFirstThursday(d) && d.getMonth() === 0;
+  function resolveList(base, key) {
+    const custom = cc[key] || [];
+    const renamedOrig = Object.keys(renames).filter(k => k.startsWith(key+"|")).map(k => k.slice((key+"|").length));
+    const resolved = base
+      .filter(c => !renamedOrig.includes(c) && !hidden.has(key+"|"+c))
+      .concat(renamedOrig.filter(c => !hidden.has(key+"|"+c)).map(c => renames[key+"|"+c]));
+    const seen = new Set(resolved);
+    return [...resolved, ...custom.filter(c => !hidden.has(key+"|"+c) && !seen.has(c))];
   }
 
   let allChores = [];
-
-  // Always add daily-all chores
   DAILY_CHORES_ALL.forEach(c => allChores.push({ label:c, assignedTo:"all" }));
-
-  // Add weekly chores for this day (base + custom)
-  const weeklyBase = WEEKLY_CHORES[dow] || [];
-  const weeklyCustom = customChores[`weekly_${dow}`] || [];
-  [...weeklyBase, ...weeklyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
-
-  // Add daily-individual chores (base + custom)
-  const dailyCustom = customChores["daily_ind"] || [];
-  [...DAILY_CHORES_INDIVIDUAL, ...dailyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
-
-  // Monthly (base + custom)
-  if (isFirstThursday(date)) {
-    const monthlyCustom = customChores["monthly"] || [];
-    [...MONTHLY_CHORES, ...monthlyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly" }));
-  }
-
-  // Quarterly
-  if (isFirstThursdayOfQuarter(date)) {
-    QUARTERLY_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly" }));
-  }
-
-  // Semi-annual
-  if (isFirstThursdayOfSemiAnnual(date)) {
-    SEMI_ANNUAL_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
-  }
-
-  // Annual
-  if (isFirstThursdayOfYear(date)) {
-    ANNUAL_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"annual" }));
-  }
-
+  resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+  resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+  if (isFirstThursday(date)) resolveList(MONTHLY_CHORES, "monthly").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly" }));
+  if (isFirstThursdayOfQuarter(date)) resolveList(QUARTERLY_CHORES, "quarterly").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly" }));
+  if (isFirstThursdayOfSemiAnnual(date)) resolveList(SEMI_ANNUAL_CHORES, "semi_annual").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
+  if (isFirstThursdayOfYear(date)) resolveList(ANNUAL_CHORES, "annual").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"annual" }));
   return allChores;
 }
 
 // Build contribute tasks for each member on a given date
-function getContributeTasksForMember(memberId, date, choreAssignments) {
-  const allChores = getChoresForDate(date, choreAssignments);
+function getContributeTasksForMember(memberId, date, choreAssignments, customChores) {
+  const allChores = getChoresForDate(date, choreAssignments, customChores);
   return allChores
     .filter(c => c.assignedTo === "all" || (Array.isArray(c.assignedTo) && c.assignedTo.includes(memberId)))
     .map((c, i) => ({ id: i+1, label: c.label, done: false, freq: c.freq || "daily" }));
@@ -594,7 +542,7 @@ const INIT_CAL_EVENTS = [];
 function CalendarPage({ family, events }) {
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
   const [weekAnchor, setWeekAnchor] = useState(() => getMountainToday());
-  const [visibleIds, setVisibleIds] = useState(new Set(family.filter(m => m.defaultOn).map(m => m.id)));
+  const [visibleIds, setVisibleIds] = useState(new Set(family.map(m => m.id))); // Calendar shows everyone by default
   const weekDates = getWeekDates(weekAnchor);
   const todayStr = getMountainToday().toDateString();
   const calScrollRef = useState(null);
@@ -603,24 +551,17 @@ function CalendarPage({ family, events }) {
   }, [calScrollRef[0]]);
   function eventMatchesDate(ev, date) {
     const dow = date.getDay();
+    // Support both old single dow and new dows array
     const matchesDow = ev.dows ? ev.dows.includes(dow) : ev.dow === dow;
     if (ev.recurrence === "daily") return true;
     if (ev.recurrence === "weekly") return matchesDow;
-    if (ev.recurrence === "monthly") {
-      if (!matchesDow) return false;
-      const weekNum = ev.monthlyWeek ?? 1;
-      if (weekNum === 5) {
-        // "Last" occurrence: check that adding 7 days goes into next month
-        const nextWeek = new Date(date); nextWeek.setDate(date.getDate() + 7);
-        return nextWeek.getMonth() !== date.getMonth();
-      }
-      // nth occurrence: date falls in the right 7-day window
-      return Math.ceil(date.getDate() / 7) === weekNum;
-    }
+    if (ev.recurrence === "monthly") return matchesDow && date.getDate() <= 7;
     if (ev.recurrence === "once" && ev.specificDate) {
+      // Compare date strings directly to avoid timezone issues
       const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
       return ev.specificDate === dateStr;
     }
+    // Legacy events default to weekly by dow
     return matchesDow;
   }
   const visibleEvents = events.filter(ev => ev.memberIds.some(id => visibleIds.has(id)));
@@ -766,12 +707,12 @@ function CalendarPage({ family, events }) {
 // PAGE 2 — TODAY
 // ════════════════════════════════════════════════════════════════════════════
 function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowDay, viewDate }) {
-  // Rainbow day: earned when all CORE sections that HAVE tasks are fully completed
-  // CORE_SECTIONS = ["learn","exercise","contribute","goals"] — plain strings
-  const sectionsWithTasks = CORE_SECTIONS.filter(sec => (tasks[sec] || []).length > 0);
+  // Rainbow day: earned when all sections that HAVE tasks are fully completed
+  // Sections with no tasks are skipped (e.g. empty Learn still allows rainbow)
+  const sectionsWithTasks = CORE_SECTIONS.filter(sec => (tasks[sec.id] || []).length > 0);
   const hasAnyCoreTasks = sectionsWithTasks.length > 0;
   const allSectionsWithTasksDone = sectionsWithTasks.every(sec =>
-    (tasks[sec] || []).every(t => !!(completions && completions[t.label + "|" + member.id]))
+    (tasks[sec.id] || []).every(t => !!(completions && completions[t.label + "|" + member.id]))
   );
   const isRainbow = hasAnyCoreTasks && allSectionsWithTasksDone;
 
@@ -789,15 +730,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
   const doneItems = allTaskItems.filter(t => !!(completions && completions[t.label + "|" + member.id])).length;
 
   return (
-    <div style={{ minWidth:0, flex:"1 1 0%", display:"flex", flexDirection:"column", borderRight:`2px solid ${T.border}`, background: isRainbow ? RAINBOW_SOFT : T.bg, transition:"background 0.8s ease", position:"relative", overflow:"hidden" }}>
-      {/* Rainbow shimmer overlay when earned */}
-      {isRainbow && (
-        <div style={{ position:"absolute", inset:0, pointerEvents:"none", zIndex:0,
-          background:"linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.22) 50%, rgba(255,255,255,0.08) 100%)",
-          animation:"shimmer 2.5s ease-in-out infinite",
-        }} />
-      )}
-      <style>{`@keyframes shimmer{0%,100%{opacity:0.5}50%{opacity:1}} @keyframes bounce{0%,100%{transform:scale(1)}50%{transform:scale(1.18)}}`}</style>
+    <div style={{ minWidth:0, flex:"1 1 0%", display:"flex", flexDirection:"column", borderRight:`2px solid ${T.border}`, background: isRainbow ? RAINBOW_SOFT : T.bg, transition:"background 0.8s ease" }}>
       <div style={{ padding:"10px 10px 8px", flexShrink:0, position:"sticky", top:0, zIndex:5, backgroundImage: isRainbow?RAINBOW_GRAD:"none", background: isRainbow?undefined:T.white, borderBottom:`2px solid ${isRainbow?"transparent":T.border}` }}>
         <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
           <div style={{ width:36, height:36, borderRadius:"50%", background: isRainbow?"rgba(255,255,255,0.35)":member.light, border:`2.5px solid ${isRainbow?"rgba(255,255,255,0.8)":member.color}`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>{member.emoji}</div>
@@ -805,7 +738,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
             <div style={{ fontFamily:"'Fredoka',sans-serif", fontWeight:700, fontSize:16, color: isRainbow?T.white:T.text, lineHeight:1 }}>{member.name}</div>
             <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, color: isRainbow?"rgba(255,255,255,0.85)":T.muted, marginTop:1 }}>{doneItems}/{totalItems} done · ⭐ {points} pts</div>
           </div>
-          {isRainbow && <span style={{ fontSize:26, animation:"bounce 1s ease-in-out infinite", display:"inline-block" }}>🌈</span>}
+          {isRainbow && <span style={{ fontSize:22 }}>🌈</span>}
         </div>
         <div style={{ background: isRainbow?"rgba(255,255,255,0.3)":T.stone, borderRadius:99, height:10, overflow:"hidden", boxShadow:"inset 0 1px 3px rgba(0,0,0,0.1)" }}>
           <div style={{ width:`${totalItems?(doneItems/totalItems)*100:0}%`, height:"100%", borderRadius:99, background: isRainbow?"#fff":member.color, transition:"width 0.4s ease", boxShadow:`0 1px 4px ${member.color}88` }} />
@@ -817,17 +750,6 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
           })}
         </div>
       </div>
-      {/* Rainbow Day celebration banner */}
-      {isRainbow && (
-        <div style={{ margin:"10px 8px 0", borderRadius:14, padding:"12px 14px", zIndex:1, position:"relative",
-          background:"rgba(255,255,255,0.88)", backdropFilter:"blur(4px)",
-          border:"2px solid rgba(255,255,255,0.9)", boxShadow:"0 4px 20px rgba(0,0,0,0.12)",
-          textAlign:"center" }}>
-          <div style={{ fontSize:26, marginBottom:4 }}>🌈✨🎉</div>
-          <div style={{ fontFamily:"'Fredoka',sans-serif", fontWeight:700, fontSize:16, color:"#1e1e2e" }}>Rainbow Day!</div>
-          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:"#555", marginTop:2 }}>{member.name} completed everything today!</div>
-        </div>
-      )}
       <div style={{ flex:1, overflowY:"scroll", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch", touchAction:"pan-y", userSelect:"none", WebkitUserSelect:"none", cursor:"grab" }}>
         {SECTIONS.map(sec => {
           const isBonus = sec.id === "bonus";
@@ -858,15 +780,12 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
               <div style={{ background: done?`${sec.color}15`:T.white, border:`2px solid ${done?sec.color+"55":T.border}`, borderTop:"none", borderRadius:"0 0 12px 12px", padding:"6px 8px 8px" }}>
                 {secTasksWithDone.map(task => (
                   <div key={task.id} onClick={() => onToggle(member.id, sec.id, task.label, task.done)}
-                    style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 8px", borderRadius:10, marginTop:4, cursor:"pointer", transition:"all 0.15s", background: task.carriedOver ? (task.done?"#FFF0E020":"#FFF8F0") : task.done?`${sec.color}20`:"transparent",
-                    border: task.carriedOver && !task.done ? "1px dashed #FF9F45" : "1px solid transparent" }}>
+                    style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 8px", borderRadius:10, marginTop:4, cursor:"pointer", transition:"all 0.15s", background: task.done?`${sec.color}20`:"transparent" }}>
                     <div style={{ width:22, height:22, borderRadius:"50%", flexShrink:0, border:`2.5px solid ${task.done?sec.color:T.border}`, background: task.done?sec.color:"transparent", display:"flex", alignItems:"center", justifyContent:"center", transition:"all 0.15s" }}>
                       {task.done && <span style={{ color:"#fff", fontSize:11 }}>✓</span>}
                     </div>
                     <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600, color: task.done?sec.color:T.text, textDecoration: task.done?"line-through":"none", lineHeight:1.35 }}>{task.label}</span>
-                    {task.carriedOver && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:10, fontWeight:700, color:"#FF9F45", background:"#FFF0E0", borderRadius:99, padding:"1px 6px", flexShrink:0 }}>yesterday</span>}
-                    {task.highValue && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color: task.done?"#9CA3AF":"#7C3AED", background: task.done?"#F3F4F6":"#F3E8FF", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>{task.done ? "✓ +5 pts" : "+5 pts"}</span>}
-                    {task.bonusPoints > 0 && !task.highValue && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color: task.done?"#9CA3AF":"#92700A", background: task.done?"#F3F4F6":"#FFFBE6", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>{task.done ? `✓ +${task.bonusPoints}pt` : `+${task.bonusPoints}pt`}</span>}
+                    {task.bonusPoints > 0 && !task.done && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:"#92700A", background:"#FFFBE6", borderRadius:99, padding:"1px 7px", flexShrink:0 }}>+{task.bonusPoints}pt</span>}
                   </div>
                 ))}
                 {!done && <div style={{ textAlign:"center", marginTop:6, fontFamily:"'Nunito',sans-serif", fontSize:10, color:T.muted }}>Complete all to earn <span style={{ fontWeight:800, color:sec.color }}>+1 pt</span></div>}
@@ -879,7 +798,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
   );
 }
 
-function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, allCompletions, onCompletionChange }) {
+function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, customChores }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
   // Task completions loaded from Supabase per day (moved after viewDate)
@@ -920,39 +839,10 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, all
 
   async function toggleTask(memberId, secId, taskLabel, currentlyDone) {
     await toggleCompletion(taskLabel, memberId, currentlyDone);
-    if (onCompletionChange) onCompletionChange();
   }
 
   const activeMembers = family.filter(m => visible[m.id]);
-
-  // Compute rainbow state for each member from live completions + mergedTasks
-  // (taskState is not reliably populated; completions is the source of truth)
-  function isMemberRainbow(memberId) {
-    const choreTasks = getContributeTasksForMember(memberId, viewDate, choreAssignments);
-    const dbMemberTasks = dbTasks[memberId] || {};
-    const dateStr = `${viewDate.getFullYear()}-${String(viewDate.getMonth()+1).padStart(2,'0')}-${String(viewDate.getDate()).padStart(2,'0')}`;
-    function filterByDate(list) {
-      return (list||[]).filter(t => {
-        if (!t.recurrence || t.recurrence === "daily") return true;
-        if (t.recurrence === "weekly") return (t.dows||[]).includes(viewDate.getDay());
-        if (t.recurrence === "once") return t.specificDate === dateStr;
-        return true;
-      });
-    }
-    const memberTasks = {
-      learn:      filterByDate(dbMemberTasks.learn),
-      exercise:   filterByDate(dbMemberTasks.exercise),
-      contribute: choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute),
-      goals:      filterByDate(dbMemberTasks.goals),
-    };
-    const coreSecs = CORE_SECTIONS.filter(s => (memberTasks[s]||[]).length > 0);
-    if (coreSecs.length === 0) return false;
-    return coreSecs.every(s =>
-      (memberTasks[s]||[]).every(t => !!(completions && completions[t.label + "|" + memberId]))
-    );
-  }
-
-  const allKidsRainbow = family.filter(m => m.defaultOn).every(m => isMemberRainbow(m.id));
+  const allKidsRainbow = family.filter(m => m.defaultOn).every(m => allSectionsDone(taskState[m.id]||{}));
 
   return (
     <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", touchAction:"pan-y", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
@@ -966,7 +856,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, all
         <div style={{ display:"flex", gap:6, overflowX:"auto" }}>
           {family.map(m => {
             const on = visible[m.id];
-            const rainbow = isMemberRainbow(m.id);
+            const rainbow = allSectionsDone(taskState[m.id]||{});
             return (
               <button key={m.id} onClick={() => setVisible(v => ({...v,[m.id]:!v[m.id]}))}
                 style={{ display:"flex", alignItems:"center", gap:5, padding:"6px 12px", borderRadius:99, flexShrink:0, cursor:"pointer", transition:"all 0.15s", background: on?m.light:T.stone, border: on?`2px solid ${m.color}`:"2px solid transparent" }}>
@@ -1003,7 +893,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, all
         <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", width:"100vw", alignItems:"stretch" }}>
           {activeMembers.map(m => {
             // Merge stored tasks with auto-generated chore tasks for today
-            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments);
+            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments, customChores);
             // Use tasks from Supabase, filtered by recurrence for viewDate
             const dbMemberTasks = dbTasks[m.id] || { learn:[], exercise:[], contribute:[], goals:[] };
             function filterByDate(taskList) {
@@ -1019,71 +909,16 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, all
               learn:      filterByDate(dbMemberTasks.learn || []),
               exercise:   filterByDate(dbMemberTasks.exercise || []),
               goals:      filterByDate(dbMemberTasks.goals || []),
-              contribute: (() => {
-                const todayChores = choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute || []);
-
-                // Tag high-value chores (monthly/quarterly/semi-annual/annual) with 5 bonus pts
-                // Use the freq field already set by getChoresForDate, plus HIGH_VALUE set as backup
-                const HIGH_VALUE = new Set([...MONTHLY_CHORES, ...QUARTERLY_CHORES, ...SEMI_ANNUAL_CHORES, ...ANNUAL_CHORES]);
-                const isHighValue = (t) => {
-                  const freqMatch = t.freq && ["monthly","quarterly","semi-annual","annual"].includes(t.freq);
-                  return freqMatch || HIGH_VALUE.has(t.label);
-                };
-                const taggedToday = todayChores.map(t => ({
-                  ...t,
-                  bonusPoints: isHighValue(t) ? 5 : 0,
-                  highValue: isHighValue(t),
-                }));
-
-                // Carry over any unfinished chores from yesterday
-                const yesterday = new Date(viewDate); yesterday.setDate(viewDate.getDate() - 1);
-                const yesterdayStr = `${yesterday.getFullYear()}-${String(yesterday.getMonth()+1).padStart(2,'0')}-${String(yesterday.getDate()).padStart(2,'0')}`;
-                const yesterdayChores = getContributeTasksForMember(m.id, yesterday, choreAssignments);
-                const carryOvers = yesterdayChores.filter(c => {
-                  const key = c.label + "|" + m.id;
-                  const wasCompleted = (allCompletions||[]).some(comp =>
-                    comp.task_label === c.label &&
-                    comp.member_id === m.id &&
-                    comp.completed_date === yesterdayStr
-                  );
-                  // Only carry over if not completed yesterday AND not already in today's list
-                  return !wasCompleted && !taggedToday.some(t => t.label === c.label);
-                }).map(c => ({
-                  ...c,
-                  label: `${c.label} (yesterday)`,
-                  carriedOver: true,
-                  bonusPoints: 0,
-                }));
-
-                return [...taggedToday, ...carryOvers];
-              })(),
+              contribute: choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute || []),
               // Bonus: filter by date like normal tasks
               bonus:      filterByDate(dbMemberTasks.bonus || []),
               // Open tasks: always show all (no date filter - they persist until done)
               open:       (dbMemberTasks.open || []),
             };
-            const HIGH_VALUE_CHORE_SET = new Set([...MONTHLY_CHORES, ...QUARTERLY_CHORES, ...SEMI_ANNUAL_CHORES, ...ANNUAL_CHORES]);
-            const memberPts = (() => {
-              let pts = 0;
-              // 1 pt per core section fully completed
-              CORE_SECTIONS.forEach(s => {
-                const items = mergedTasks[s] || [];
-                if (items.length > 0 && items.every(t => !!(completions && completions[t.label + "|" + m.id]))) {
-                  pts += 1;
-                }
-              });
-              // Bonus tasks: add bonusPoints per completed task
-              (mergedTasks.bonus || []).forEach(t => {
-                if (completions && completions[t.label + "|" + m.id]) pts += (t.bonusPoints || 1);
-              });
-              // High-value chores: 5 pts each when completed
-              (mergedTasks.contribute || []).forEach(t => {
-                if (HIGH_VALUE_CHORE_SET.has(t.label) && completions && completions[t.label + "|" + m.id]) {
-                  pts += 5;
-                }
-              });
-              return pts;
-            })();
+            const memberPts = CORE_SECTIONS.filter(s => {
+              const items = mergedTasks[s.id] || [];
+              return items.length > 0 && items.every(t => !!(completions && completions[t.label + "|" + m.id]));
+            }).length;
             return <PersonColumn key={m.id} member={m} tasks={mergedTasks} onToggle={toggleTask} points={memberPts} completions={completions} onRainbowDay={onRainbowDay} viewDate={viewDate} />;
           })}
         </div>
@@ -1338,7 +1173,7 @@ function GoalsQuadrant({ family, goals, setGoals, dbGoalRows, activeMember }) {
   );
 }
 
-function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, allCompletions, tasks, dbGoalRows, choreAssignments }) {
+function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, allCompletions, tasks, dbGoalRows }) {
   const [activeMember, setActiveMember] = useState(family[0]);
 
   // ── Real Badge Engine ─────────────────────────────────────────────────────
@@ -1365,11 +1200,6 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     { id:"ex_7",        emoji:"💪", label:"Getting Strong",   desc:"Completed Exercise 7 days",              category:"exercise", check: s => s.exerciseDays >= 7 },
     { id:"ex_14",       emoji:"🏃", label:"On the Move",      desc:"Completed Exercise 14 days",             category:"exercise", check: s => s.exerciseDays >= 14 },
     { id:"ex_30",       emoji:"🏅", label:"Athlete",          desc:"Completed Exercise 30 days",             category:"exercise", check: s => s.exerciseDays >= 30 },
-    // Exercise consistency (streak + monthly volume)
-    { id:"ex_streak3",  emoji:"🔥", label:"3-Day Burn",       desc:"Exercised 3 days in a row",              category:"exercise", check: s => s.exerciseStreak >= 3 },
-    { id:"ex_streak7",  emoji:"⚡", label:"Week Warrior",     desc:"Exercised 7 days in a row",              category:"exercise", check: s => s.exerciseStreak >= 7 },
-    { id:"ex_month10",  emoji:"🥈", label:"Consistent",       desc:"Exercised 10+ days in a single month",   category:"exercise", check: s => s.exerciseBestMonth >= 10 },
-    { id:"ex_month20",  emoji:"🥇", label:"Dedicated",        desc:"Exercised 20+ days in a single month",   category:"exercise", check: s => s.exerciseBestMonth >= 20 },
 
     // 🤝 Contribute badges
     { id:"con_first",   emoji:"✨", label:"Helping Hand",     desc:"Completed Contribute tasks for the first time", category:"contribute", check: s => s.contributeDays >= 1 },
@@ -1411,35 +1241,15 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     const now = new Date();
     const weekAgo = new Date(now); weekAgo.setDate(now.getDate()-7);
     const memberGoals = tasks[memberId]?.goals || [];
-
-    // Exercise streak: consecutive days back from today
-    const exDates = Array.from(datesBySection.exercise).sort();
-    let exerciseStreak = 0;
-    if (exDates.length > 0) {
-      const cursor = new Date(); cursor.setHours(0,0,0,0);
-      for (let i = 0; i < 365; i++) {
-        const dStr = `${cursor.getFullYear()}-${String(cursor.getMonth()+1).padStart(2,'0')}-${String(cursor.getDate()).padStart(2,'0')}`;
-        if (exDates.includes(dStr)) { exerciseStreak++; cursor.setDate(cursor.getDate()-1); }
-        else break;
-      }
-    }
-
-    // Exercise best month: max exercise days in any single calendar month
-    const exByMonth = {};
-    exDates.forEach(d => { const key = d.slice(0,7); exByMonth[key] = (exByMonth[key]||0) + 1; });
-    const exerciseBestMonth = Object.values(exByMonth).length > 0 ? Math.max(...Object.values(exByMonth)) : 0;
-
     return {
-      totalRainbow:      memberRd.length,
-      streak:            streaks[memberId] || 0,
-      rdWeek:            memberRd.filter(r => new Date(r.date+"T00:00:00") >= weekAgo).length,
-      learnDays:         datesBySection.learn.size,
-      exerciseDays:      datesBySection.exercise.size,
-      exerciseStreak,
-      exerciseBestMonth,
-      contributeDays:    datesBySection.contribute.size,
-      goalsDays:         datesBySection.goals.size,
-      goalsSet:          memberGoals.length,
+      totalRainbow:   memberRd.length,
+      streak:         streaks[memberId] || 0,
+      rdWeek:         memberRd.filter(r => new Date(r.date+"T00:00:00") >= weekAgo).length,
+      learnDays:      datesBySection.learn.size,
+      exerciseDays:   datesBySection.exercise.size,
+      contributeDays: datesBySection.contribute.size,
+      goalsDays:      datesBySection.goals.size,
+      goalsSet:       memberGoals.length,
     };
   }
 
@@ -1449,96 +1259,8 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
   }
 
   const streak  = streaks[activeMember.id]  || 0;
-
-  // ── Dynamic Points Calculation ──────────────────────────────────────────────
-  // 1 pt per core section fully completed that day + bonus task pts + 5 pts per high-value chore
-  const HIGH_VALUE_SET = new Set([...MONTHLY_CHORES, ...QUARTERLY_CHORES, ...SEMI_ANNUAL_CHORES, ...ANNUAL_CHORES]);
-
-  function computePtsForMember(memberId, fromDateStr, toDateStr) {
-    const memberComps = (allCompletions||[]).filter(c =>
-      c.member_id === memberId &&
-      c.completed_date >= fromDateStr &&
-      c.completed_date <= toDateStr
-    );
-    // Group completions by date
-    const byDate = {};
-    memberComps.forEach(c => {
-      if (!byDate[c.completed_date]) byDate[c.completed_date] = [];
-      byDate[c.completed_date].push(c.task_label);
-    });
-
-    const memberTasks = tasks[memberId] || {};
-    let total = 0;
-
-    Object.entries(byDate).forEach(([dateStr, completedLabels]) => {
-      // Build what tasks were actually scheduled for this specific date
-      const dateParts = dateStr.split("-");
-      const dateObj = new Date(+dateParts[0], +dateParts[1]-1, +dateParts[2]);
-
-      // Contribute: use actual chore schedule for that date (not tasks table)
-      const scheduledChores = getContributeTasksForMember(memberId, dateObj, choreAssignments || {});
-      const contributeComplete = scheduledChores.length > 0 &&
-        scheduledChores.every(t => completedLabels.includes(t.label));
-
-      // Learn / Exercise / Goals: check tasks table (filtered for that date's recurrence)
-      const learnTasks   = (memberTasks.learn   || []).filter(t => taskActiveOnDate(t, dateObj));
-      const exerciseTasks= (memberTasks.exercise|| []).filter(t => taskActiveOnDate(t, dateObj));
-      const goalsTasks   = (memberTasks.goals   || []).filter(t => taskActiveOnDate(t, dateObj));
-
-      if (learnTasks.length    > 0 && learnTasks.every(t    => completedLabels.includes(t.label))) total += 1;
-      if (exerciseTasks.length > 0 && exerciseTasks.every(t => completedLabels.includes(t.label))) total += 1;
-      if (goalsTasks.length    > 0 && goalsTasks.every(t    => completedLabels.includes(t.label))) total += 1;
-      if (contributeComplete) total += 1;
-
-      // Bonus tasks: add bonusPoints per completed bonus task
-      for (const t of (memberTasks.bonus||[])) {
-        if (completedLabels.includes(t.label)) total += (t.bonusPoints || 1);
-      }
-
-      // High-value chores: 5 pts each when completed (in addition to section pt)
-      for (const label of completedLabels) {
-        if (HIGH_VALUE_SET.has(label)) total += 5;
-      }
-    });
-
-    return total;
-  }
-
-  // Helper: was a task active (by recurrence) on a given date?
-  function taskActiveOnDate(t, dateObj) {
-    const dateStr = `${dateObj.getFullYear()}-${String(dateObj.getMonth()+1).padStart(2,'0')}-${String(dateObj.getDate()).padStart(2,'0')}`;
-    if (!t.recurrence || t.recurrence === "daily") return true;
-    if (t.recurrence === "weekly") return (t.dows||[]).includes(dateObj.getDay());
-    if (t.recurrence === "once") return t.specificDate === dateStr;
-    return true;
-  }
-
-  // Today's pts
-  const todayStr = getMountainToday().toISOString().slice(0,10);
-  const todayPts = computePtsForMember(activeMember.id, todayStr, todayStr);
-
-  // This week's pts (Mon–today)
-  const wPts = (() => {
-    const now = getMountainToday();
-    const dow = now.getDay();
-    const daysToMon = (dow + 6) % 7;
-    const mon = new Date(now); mon.setDate(now.getDate() - daysToMon);
-    const monStr = mon.toISOString().slice(0,10);
-    return computePtsForMember(activeMember.id, monStr, todayStr);
-  })();
-
-  // Last week's pts (Mon–Sun of prior week)
-  const lastWeekPts = (() => {
-    const now = getMountainToday();
-    const dow = now.getDay();
-    const daysToLastMon = ((dow + 6) % 7) + 7;
-    const lastMon = new Date(now); lastMon.setDate(now.getDate() - daysToLastMon);
-    const lastSun = new Date(lastMon); lastSun.setDate(lastMon.getDate() + 6);
-    const lastMonStr = lastMon.toISOString().slice(0,10);
-    const lastSunStr = lastSun.toISOString().slice(0,10);
-    return computePtsForMember(activeMember.id, lastMonStr, lastSunStr);
-  })();
-
+  const wPts    = weekPts[activeMember.id]  || 0;
+  const todayPts = SECTIONS.length;
   const earnedBadges = getEarnedBadges(activeMember.id);
 
   return (
@@ -1662,18 +1384,14 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
         })()}
 
         {/* Points & Money */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:18 }}>
-          {[
-            { label:"Today",     pts:todayPts,   dimmed:false },
-            { label:"This Week", pts:wPts,        dimmed:false },
-            { label:"Last Week", pts:lastWeekPts, dimmed:true  },
-          ].map(card => (
-            <div key={card.label} style={{ background: card.dimmed?"#F5F3EF":T.white, border:`2px solid ${card.dimmed?T.stone:T.border}`, borderRadius:18, padding:"14px 10px", textAlign:"center" }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
+          {[{label:"Today",pts:todayPts},{label:"This Week",pts:wPts}].map(card => (
+            <div key={card.label} style={{ background:T.white, border:`2px solid ${T.border}`, borderRadius:18, padding:"14px 12px", textAlign:"center" }}>
               <div style={{ fontSize:11, fontWeight:700, color:T.muted, letterSpacing:0.8, textTransform:"uppercase", marginBottom:6 }}>{card.label}</div>
-              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color: card.dimmed?T.sub:activeMember.color, lineHeight:1 }}>{card.pts}</div>
+              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:30, fontWeight:700, color:activeMember.color, lineHeight:1 }}>{card.pts}</div>
               <div style={{ fontSize:11, color:T.sub, marginTop:2 }}>pts</div>
               <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
-                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color: card.dimmed?T.sub:"#2D7A56" }}>${(card.pts*0.25).toFixed(2)}</div>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:20, fontWeight:700, color:"#2D7A56" }}>${(card.pts*0.25).toFixed(2)}</div>
                 <div style={{ fontSize:10, color:T.muted }}>earned</div>
               </div>
             </div>
@@ -1691,7 +1409,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
 // ════════════════════════════════════════════════════════════════════════════
 // ADMIN PAGE
 // ════════════════════════════════════════════════════════════════════════════
-function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, dbTaskRows, dbGoalRows, onReload, screensaverMsg, setScreensaverMsg }) {
+function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, customChores, saveCustomChores, dbTaskRows, dbGoalRows, onReload, screensaverMsg, setScreensaverMsg }) {
   const [tab, setTab] = useState("calendar");
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
 
@@ -1704,7 +1422,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
             <h1 style={{ fontSize:26, fontWeight:700, color:T.white, margin:0 }}>Admin Setup</h1>
             <div style={{ fontSize:13, color:"rgba(255,255,255,0.5)", marginTop:2 }}>
               Family OS · <a href="#" onClick={e=>{e.preventDefault();window.location.hash="";}} style={{color:"#FFD93D",textDecoration:"none"}}>← Back to Kiosk</a>
-              <span style={{ marginLeft:12, color:"#6BCB77" }}>✅ Auto-saving to this device</span>
+              <span style={{ marginLeft:12, color:"#6BCB77" }}>✅ Synced across all devices</span>
             </div>
           </div>
           <button onClick={() => {
@@ -1728,7 +1446,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
         </div>
       </div>
 
-      <div style={{ padding:"24px 24px 100px", maxWidth:900, margin:"0 auto", overflowY:"scroll", minHeight:"calc(100vh - 140px)", WebkitOverflowScrolling:"touch", touchAction:"pan-y" }}>
+      <div style={{ padding:"20px 16px 120px", maxWidth:900, margin:"0 auto" }}>
 
         {/* Screensaver Message */}
         <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px 20px", marginBottom:24 }}>
@@ -1778,7 +1496,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
         </div>
 
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
-        {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} />}
+        {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} customChores={customChores} saveCustomChores={saveCustomChores} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
         {tab==="goals"    && <AdminGoals    family={family} goals={goals}   setGoals={setGoals} />}
       </div>
@@ -1787,10 +1505,9 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
 }
 
 function AdminCalendar({ family, events, setEvents, memberMap }) {
-  const EMPTY_FORM = { title:"", memberIds:[], startH:9, dur:1, recurrence:"weekly", dows:[1], specificDate:"", monthlyWeek:1 };
+  const EMPTY_FORM = { title:"", memberIds:[], startH:9, dur:1, recurrence:"weekly", dows:[1], specificDate:"", color:null };
   const [form, setForm] = useState(EMPTY_FORM);
   const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null); // id of event being edited, null = adding new
   const [showOAuthGuide, setShowOAuthGuide] = useState(null);
   const [connectedMembers, setConnectedMembers] = useState([]);
 
@@ -1810,54 +1527,14 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   }, []);
   const DOW_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 
-  function startEdit(ev) {
-    setForm({
-      title:       ev.title,
-      memberIds:   ev.memberIds,
-      startH:      ev.startH,
-      dur:         ev.dur,
-      recurrence:  ev.recurrence,
-      dows:        ev.dows || [ev.dow || 1],
-      specificDate: ev.specificDate || "",
-      monthlyWeek: ev.monthlyWeek || 1,
-    });
-    setEditingId(ev.id);
-    setShowForm(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function cancelForm() {
-    setShowForm(false);
-    setEditingId(null);
-    setForm(EMPTY_FORM);
-  }
-
-  async function saveEvent() {
+  async function addEvent() {
     if (!form.title || form.memberIds.length===0) return;
     if (form.recurrence === "once" && !form.specificDate) return;
     if ((form.recurrence === "weekly" || form.recurrence === "monthly") && (!form.dows || form.dows.length === 0)) return;
-
-    if (editingId) {
-      // Update existing event
-      const result = await SB.updateEvent(editingId, { ...form, monthlyWeek: form.monthlyWeek ?? 1 });
-      if (result !== null) {
-        // Re-fetch to get the updated row back
-        const allRows = await SB.getEvents();
-        if (allRows) setEvents(dbEventsToApp(allRows));
-        cancelForm();
-      } else {
-        alert("Failed to update event — check the browser console for details.");
-      }
-    } else {
-      // Add new event
-      const rows = await SB.addEvent({ ...form, monthlyWeek: form.monthlyWeek ?? 1 });
-      if (rows) {
-        setEvents(prev => [...prev, ...dbEventsToApp(rows)]);
-        cancelForm();
-      } else {
-        alert("Failed to save event — check the browser console for details.");
-      }
-    }
+    const rows = await SB.addEvent(form);
+    if (rows) setEvents(prev => [...prev, ...dbEventsToApp(rows)]);
+    setForm(EMPTY_FORM);
+    setShowForm(false);
   }
 
   function recurrenceLabel(ev) {
@@ -1865,21 +1542,11 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
     if (ev.recurrence === "daily") return "Every day";
     const days = ev.dows ? ev.dows.map(i=>DOW_LABELS[i].slice(0,3)).join(", ") : (ev.dow !== undefined ? DOW_LABELS[ev.dow] : "");
     if (ev.recurrence === "weekly") return `Every ${days}`;
-    if (ev.recurrence === "monthly") {
-      const occLabel = ["1st","2nd","3rd","4th","Last"][(ev.monthlyWeek??1)-1];
-      return `Monthly · ${occLabel} ${days}`;
-    }
+    if (ev.recurrence === "monthly") return `Monthly · ${days}`;
     return ev.recurrence;
   }
 
-  function formatH(h) {
-    const hour = Math.floor(h);
-    const mins = h % 1 === 0.5 ? "30" : "00";
-    if (hour === 0 || hour === 24) return `12:${mins} AM`;
-    if (hour === 12) return `12:${mins} PM`;
-    if (hour > 12) return `${hour-12}:${mins} PM`;
-    return `${hour}:${mins} AM`;
-  }
+  function formatH(h) { return h > 12 ? `${h-12}:00 PM` : h === 12 ? "12:00 PM" : `${h}:00 AM`; }
 
   const OAUTH_STEPS = {
     google: {
@@ -1914,7 +1581,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
     <div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:20 }}>
         <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:0 }}>📅 Calendar Events</h2>
-        <button onClick={() => { setEditingId(null); setForm(EMPTY_FORM); setShowForm(!showForm); }} style={{ background:T.text, color:"#fff", border:"none", borderRadius:12, padding:"10px 20px", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, cursor:"pointer" }}>+ Add Event</button>
+        <button onClick={() => setShowForm(!showForm)} style={{ background:T.text, color:"#fff", border:"none", borderRadius:12, padding:"10px 20px", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, cursor:"pointer" }}>+ Add Event</button>
       </div>
 
       {/* OAuth Setup Cards */}
@@ -2011,8 +1678,8 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
 
       {/* Add Event Form */}
       {showForm && (
-        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${editingId?"#3B6FA0":T.border}`, padding:"18px 20px", marginBottom:20 }}>
-          <h3 style={{ fontSize:17, fontWeight:700, color: editingId?"#3B6FA0":T.text, margin:"0 0 14px" }}>{editingId ? "✏️ Edit Event" : "New Event"}</h3>
+        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px 20px", marginBottom:20 }}>
+          <h3 style={{ fontSize:17, fontWeight:700, color:T.text, margin:"0 0 14px" }}>New Event</h3>
 
           {/* Title */}
           <div style={{ marginBottom:12 }}>
@@ -2044,7 +1711,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
           {(form.recurrence === "weekly" || form.recurrence === "monthly") && (
             <div style={{ marginBottom:12 }}>
               <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>
-                {form.recurrence === "weekly" ? "Days of Week" : "Which Day of the Week"}
+                {form.recurrence === "weekly" ? "Days of Week" : "Which Days Each Month"}
                 <span style={{ fontWeight:400, color:T.muted, marginLeft:6 }}>— tap to select multiple</span>
               </label>
               <div style={{ display:"flex", gap:5 }}>
@@ -2075,40 +1742,6 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
             </div>
           )}
 
-          {/* Monthly occurrence picker — which week of the month */}
-          {form.recurrence === "monthly" && (
-            <div style={{ marginBottom:12 }}>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>
-                Which Occurrence Each Month
-              </label>
-              <div style={{ display:"flex", gap:6 }}>
-                {[
-                  { value:1, label:"1st" },
-                  { value:2, label:"2nd" },
-                  { value:3, label:"3rd" },
-                  { value:4, label:"4th" },
-                  { value:5, label:"Last" },
-                ].map(opt => {
-                  const on = (form.monthlyWeek ?? 1) === opt.value;
-                  return (
-                    <button key={opt.value} onClick={() => setForm(f => ({ ...f, monthlyWeek: opt.value }))} style={{
-                      flex:1, padding:"9px 4px", borderRadius:10, border:"none", cursor:"pointer",
-                      background: on ? "#3B6FA0" : T.stone,
-                      color: on ? "#fff" : T.sub,
-                      fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
-                      transition:"all 0.15s",
-                    }}>{opt.label}</button>
-                  );
-                })}
-              </div>
-              {(form.dows||[]).length > 0 && (
-                <div style={{ fontSize:11, color:"#3B6FA0", fontFamily:"'Nunito',sans-serif", marginTop:6, fontWeight:600 }}>
-                  📅 Every {["1st","2nd","3rd","4th","Last"][(form.monthlyWeek??1)-1]} {DOW_LABELS[(form.dows||[1])[0]]} of the month
-                </div>
-              )}
-            </div>
-          )}
-
           {/* Specific date for one-time */}
           {form.recurrence === "once" && (
             <div style={{ marginBottom:12 }}>
@@ -2122,7 +1755,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Time</label>
               <select value={form.startH} onChange={e=>setForm(f=>({...f,startH:+e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }}>
-                {Array.from({ length: 40 }, (_, i) => i * 0.5 + 5).map(h => <option key={h} value={h}>{formatH(h)}</option>)}
+                {CAL_HOURS.map(h => <option key={h} value={h}>{formatH(h)}</option>)}
               </select>
             </div>
             <div>
@@ -2149,8 +1782,8 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
           </div>
 
           <div style={{ display:"flex", gap:10 }}>
-            <button onClick={saveEvent} style={{ flex:1, padding:"12px", borderRadius:12, background: editingId?"#3B6FA0":T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>{editingId ? "Save Changes" : "Add to Calendar"}</button>
-            <button onClick={cancelForm} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, cursor:"pointer" }}>Cancel</button>
+            <button onClick={addEvent} style={{ flex:1, padding:"12px", borderRadius:12, background:T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>Add to Calendar</button>
+            <button onClick={() => { setShowForm(false); setForm(EMPTY_FORM); }} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, cursor:"pointer" }}>Cancel</button>
           </div>
         </div>
       )}
@@ -2172,8 +1805,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
               <div style={{ background: recTag==="One-time"?"#F3E5FF":recTag==="Daily"?"#D5EEE2":recTag==="Monthly"?"#FDEEDE":"#D6E8F7", color: recTag==="One-time"?"#7C5C9E":recTag==="Daily"?"#2D7A56":recTag==="Monthly"?"#D4732A":"#3B6FA0", borderRadius:99, padding:"3px 9px", fontSize:11, fontWeight:700, fontFamily:"'Fredoka',sans-serif", flexShrink:0 }}>
                 {recTag}
               </div>
-              <button onClick={() => startEdit(ev)} style={{ padding:"6px 12px", borderRadius:8, background:"#D6E8F7", color:"#3B6FA0", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer", flexShrink:0 }}>Edit</button>
-              <button onClick={async () => { await SB.deleteEvent(ev.id); setEvents(prev=>prev.filter(e=>e.id!==ev.id)); }} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer", flexShrink:0 }}>Remove</button>
+              <button onClick={async () => { await SB.deleteEvent(ev.id); setEvents(prev=>prev.filter(e=>e.id!==ev.id)); }} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
             </div>
           );
         })}
@@ -2194,59 +1826,40 @@ const FREQ_GROUPS = [
   { id:"annual",      label:"Annual",              color:"#2D7A56", chores: ANNUAL_CHORES,          desc:"Appears on the 1st Thursday of January" },
 ];
 
-function AdminChores({ family, choreAssignments, setChoreAssignments }) {
+function AdminChores({ family, choreAssignments, setChoreAssignments, customChores, saveCustomChores }) {
   const choreAssignmentsRef = { current: choreAssignments };
-  choreAssignmentsRef.current = choreAssignments; // always current
+  choreAssignmentsRef.current = choreAssignments;
   const [activeFreq, setActiveFreq] = useState("daily_ind");
   const [activeDow, setActiveDow] = useState(1);
-  const [editingChore, setEditingChore] = useState(null); // { oldLabel, newLabel, freq, dow }
+  const [editingChore, setEditingChore] = useState(null);
   const [addingChore, setAddingChore] = useState(false);
   const [newChoreName, setNewChoreName] = useState("");
 
-  // Custom chores added by user (stored in localStorage)
-  const [customChores, setCustomChores] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("familyos_customChores") || "{}"); }
-    catch { return {}; }
-  });
+  // customChores and saveCustomChores are now Supabase-backed (passed from AppInner)
+  // so all devices stay in sync automatically
 
-  function saveCustomChores(next) {
-    setCustomChores(next);
-    try { localStorage.setItem("familyos_customChores", JSON.stringify(next)); } catch {}
-  }
-
-  // Get chores for a given freq/dow, including custom ones
   function getChorelist(freqId, dow) {
     const base = freqId === "weekly"
       ? (WEEKLY_CHORES[dow] || [])
       : (FREQ_GROUPS.find(f => f.id === freqId)?.chores || []);
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const custom = (customChores[key] || []);
-    const renames = customChores._renames || {};
-    const hidden  = new Set(customChores._hidden  || []);
-
-    // Apply renames to built-in chores
-    const renamedBuiltIns = Object.keys(renames)
-      .filter(k => k.startsWith(key + "|"))
-      .map(k => k.slice((key + "|").length));
-
-    const resolvedBase = base
-      .filter(c => !renamedBuiltIns.includes(c) && !hidden.has(key + "|" + c))
-      .concat(
-        renamedBuiltIns
-          .filter(c => !hidden.has(key + "|" + c))
-          .map(c => renames[key + "|" + c])
-      );
-
-    // Merge, dedup (custom chores might accidentally duplicate a built-in name)
-    const seen = new Set(resolvedBase);
-    const dedupedCustom = custom.filter(c => !hidden.has(key + "|" + c) && !seen.has(c));
-    return [...resolvedBase, ...dedupedCustom];
+    const cc = customChores || {};
+    const custom = cc[key] || [];
+    const renames = cc._renames || {};
+    const hidden  = new Set(cc._hidden || []);
+    const renamedOrig = Object.keys(renames).filter(k => k.startsWith(key+"|")).map(k => k.slice((key+"|").length));
+    const resolved = base
+      .filter(c => !renamedOrig.includes(c) && !hidden.has(key+"|"+c))
+      .concat(renamedOrig.filter(c => !hidden.has(key+"|"+c)).map(c => renames[key+"|"+c]));
+    const seen = new Set(resolved);
+    return [...resolved, ...custom.filter(c => !hidden.has(key+"|"+c) && !seen.has(c))];
   }
 
   function addCustomChore() {
     if (!newChoreName.trim()) return;
     const key = activeFreq === "weekly" ? `weekly_${activeDow}` : activeFreq;
-    const next = { ...customChores, [key]: [...(customChores[key]||[]), newChoreName.trim()] };
+    const cc = customChores || {};
+    const next = { ...cc, [key]: [...(cc[key]||[]), newChoreName.trim()] };
     saveCustomChores(next);
     setNewChoreName("");
     setAddingChore(false);
@@ -2256,107 +1869,57 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
     const trimmed = newLabel.trim();
     if (!trimmed || trimmed === oldLabel) { setEditingChore(null); return; }
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const custom = customChores[key] || [];
-
-    // Whether it's a built-in or custom chore, store the rename in customChores
-    // by replacing the old label with the new one (or adding if not present)
+    const cc = customChores || {};
+    const custom = cc[key] || [];
+    const base = freqId === "weekly" ? (WEEKLY_CHORES[dow]||[]) : (FREQ_GROUPS.find(f=>f.id===freqId)?.chores||[]);
     const existingIdx = custom.indexOf(oldLabel);
-    let nextCustom;
+    let next = { ...cc };
     if (existingIdx >= 0) {
-      // It's already a custom chore — just rename it in the array
-      nextCustom = custom.map((c, i) => i === existingIdx ? trimmed : c);
+      next = { ...next, [key]: custom.map((c,i) => i===existingIdx ? trimmed : c) };
     } else {
-      // It's a built-in chore — store a rename entry so getChorelist returns the new name
-      // We store it as a special "rename:<old>:<new>" sentinel, or simpler:
-      // store the renamed chore in a separate renames map in customChores
-      const renames = customChores._renames || {};
-      const nextRenames = { ...renames, [key + "|" + oldLabel]: trimmed };
-      const nextCustomChores = { ...customChores, _renames: nextRenames };
-      // Also rename in assignments
-      setChoreAssignments(prev => {
-        const next = { ...prev };
-        if (next[oldLabel] !== undefined) {
-          next[trimmed] = next[oldLabel];
-          delete next[oldLabel];
-          SB.upsertChore(trimmed, next[trimmed]);
-          SB.upsertChore(oldLabel, []); // clear old assignment
-        }
-        return next;
-      });
-      saveCustomChores(nextCustomChores);
-      setEditingChore(null);
-      return;
+      // Built-in — store rename and scrub any accidental duplicate from custom list
+      const renames = cc._renames || {};
+      next = { ...next, _renames: { ...renames, [key+"|"+oldLabel]: trimmed } };
+      if (custom.includes(trimmed)) next = { ...next, [key]: custom.filter(c => c !== trimmed) };
     }
-
-    const nextCustomChores = { ...customChores, [key]: nextCustom };
-    // Also rename in assignments
     setChoreAssignments(prev => {
-      const next = { ...prev };
-      if (next[oldLabel] !== undefined) {
-        next[trimmed] = next[oldLabel];
-        delete next[oldLabel];
-        SB.upsertChore(trimmed, next[trimmed]);
+      const updated = { ...prev };
+      if (updated[oldLabel] !== undefined) {
+        updated[trimmed] = updated[oldLabel];
+        delete updated[oldLabel];
+        SB.upsertChore(trimmed, updated[trimmed]);
       }
-      return next;
+      return updated;
     });
-    saveCustomChores(nextCustomChores);
+    saveCustomChores(next);
     setEditingChore(null);
   }
 
   function deleteChore(label, freqId, dow) {
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const custom = customChores[key] || [];
-    const renames = customChores._renames || {};
-
-    // Find if this label is a renamed built-in (value in _renames)
-    const renameEntry = Object.entries(renames).find(([k, v]) => k.startsWith(key + "|") && v === label);
-    // Find if this label is a plain built-in (in base arrays)
-    const base = freqId === "weekly"
-      ? (WEEKLY_CHORES[dow] || [])
-      : (FREQ_GROUPS.find(f => f.id === freqId)?.chores || []);
-    const isBuiltIn = base.includes(label) || !!renameEntry;
-
-    let nextCustom = { ...customChores };
-
-    if (custom.includes(label)) {
-      // It's a plain custom chore — remove from list
-      nextCustom = { ...nextCustom, [key]: custom.filter(c => c !== label) };
-    }
+    const cc = customChores || {};
+    const custom = cc[key] || [];
+    const renames = cc._renames || {};
+    const renameEntry = Object.entries(renames).find(([k,v]) => k.startsWith(key+"|") && v===label);
+    let next = { ...cc };
+    if (custom.includes(label)) next = { ...next, [key]: custom.filter(c => c !== label) };
     if (renameEntry) {
-      // It's a renamed built-in — clear the rename entry and hide the original
-      const nextRenames = { ...renames };
-      delete nextRenames[renameEntry[0]];
-      const originalLabel = renameEntry[0].slice((key + "|").length);
-      const hidden = [...(customChores._hidden || []), key + "|" + originalLabel];
-      nextCustom = { ...nextCustom, _renames: nextRenames, _hidden: hidden };
+      const nextRenames = { ...renames }; delete nextRenames[renameEntry[0]];
+      const origLabel = renameEntry[0].slice((key+"|").length);
+      next = { ...next, _renames: nextRenames, _hidden: [...(cc._hidden||[]), key+"|"+origLabel] };
+    } else {
+      const base = freqId === "weekly" ? (WEEKLY_CHORES[dow]||[]) : (FREQ_GROUPS.find(f=>f.id===freqId)?.chores||[]);
+      if (base.includes(label)) next = { ...next, _hidden: [...(cc._hidden||[]), key+"|"+label] };
     }
-    if (isBuiltIn && !renameEntry) {
-      // It's a plain built-in — add to hidden list
-      const hidden = [...(customChores._hidden || []), key + "|" + label];
-      nextCustom = { ...nextCustom, _hidden: hidden };
-    }
-
-    saveCustomChores(nextCustom);
-
-    // Remove from assignments
-    setChoreAssignments(prev => {
-      const next = { ...prev };
-      delete next[label];
-      SB.upsertChore(label, []);
-      return next;
-    });
+    saveCustomChores(next);
+    setChoreAssignments(prev => { const u={...prev}; delete u[label]; SB.upsertChore(label,[]); return u; });
   }
 
   async function toggleAssignment(chore, memberId) {
-    // Read from ref to always get the latest value (avoids stale closure)
     const current = choreAssignmentsRef.current[chore] || [];
     const isOn = current.includes(memberId);
-    const updated = isOn
-      ? current.filter(id => id !== memberId)
-      : [...current, memberId];
-    // Update state immediately
+    const updated = isOn ? current.filter(id=>id!==memberId) : [...current, memberId];
     setChoreAssignments(prev => ({ ...prev, [chore]: updated }));
-    // Save to Supabase
     await SB.upsertChore(chore, updated);
   }
 
@@ -2370,43 +1933,33 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
         Assign chores to family members. Tap a chore name to rename it. Use + to add custom chores.
       </p>
 
-      {/* Frequency tabs */}
-      <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", paddingBottom:4 }}>
-        {FREQ_GROUPS.map(f => (
-          <button key={f.id} onClick={() => setActiveFreq(f.id)} style={{
-            padding:"8px 14px", borderRadius:99, border:"none", cursor:"pointer", flexShrink:0,
-            background: activeFreq===f.id ? f.color : T.stone,
-            color: activeFreq===f.id ? "#fff" : T.sub,
-            fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
-          }}>{f.label}</button>
+      {/* Freq tabs — scrollable on mobile */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
+        {[{id:"daily_all",label:"Daily (Everyone)"},{id:"daily_ind",label:"Daily (Assign)"},{id:"weekly",label:"Weekly"},{id:"monthly",label:"Monthly"},{id:"quarterly",label:"Quarterly"},{id:"semi_annual",label:"Semi-Annual"},{id:"annual",label:"Annual"}].map(f => (
+          <button key={f.id} onClick={() => setActiveFreq(f.id)} style={{ flexShrink:0, padding:"8px 14px", borderRadius:99, border:"none", cursor:"pointer", background: activeFreq===f.id?"#2D7A56":"#E8E4DD", color: activeFreq===f.id?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600, whiteSpace:"nowrap" }}>{f.label}</button>
         ))}
       </div>
 
-      {/* Description */}
-      <div style={{ background:freq.color+"18", border:`1.5px solid ${freq.color}44`, borderRadius:12, padding:"10px 14px", marginBottom:16 }}>
-        <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.sub }}>{freq.desc}</span>
-      </div>
-
-      {/* Day of week picker for weekly */}
+      {/* Day-of-week picker for weekly */}
       {activeFreq === "weekly" && (
-        <div style={{ display:"flex", gap:6, marginBottom:16 }}>
-          {DOW_LABELS_FULL.map((d, i) => (
-            <button key={i} onClick={() => setActiveDow(i)} style={{
-              flex:1, padding:"8px 4px", borderRadius:10, border:"none", cursor:"pointer",
-              background: activeDow===i ? freq.color : T.stone,
-              color: activeDow===i ? "#fff" : T.sub,
-              fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700,
-            }}>{d.slice(0,3)}</button>
+        <div style={{ display:"flex", gap:6, marginBottom:14, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:2 }}>
+          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i) => (
+            <button key={i} onClick={() => setActiveDow(i)} style={{ flexShrink:0, padding:"7px 12px", borderRadius:99, border:"none", cursor:"pointer", background: activeDow===i?"#3B6FA0":"#E8E4DD", color: activeDow===i?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600 }}>{d}</button>
           ))}
+        </div>
+      )}
+
+      {/* Freq description */}
+      {freq && (
+        <div style={{ background: freq.color+"18", border:`1.5px solid ${freq.color}44`, borderRadius:12, padding:"10px 14px", marginBottom:14 }}>
+          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.sub, fontWeight:600 }}>{freq.desc}</div>
         </div>
       )}
 
       {/* Daily-all notice */}
       {activeFreq === "daily_all" && (
         <div style={{ background:"#F0FDF4", border:"1.5px solid #86EFAC", borderRadius:12, padding:"12px 16px", marginBottom:16 }}>
-          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:"#166534", fontWeight:600 }}>
-            ✅ These chores are automatically assigned to everyone — no action needed.
-          </div>
+          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:"#166534", fontWeight:600 }}>✅ These chores are automatically assigned to everyone — no action needed.</div>
           <div style={{ marginTop:8, display:"flex", flexWrap:"wrap", gap:6 }}>
             {DAILY_CHORES_ALL.map(c => (
               <div key={c} style={{ background:"#DCFCE7", color:"#166534", borderRadius:99, padding:"4px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600 }}>{c}</div>
@@ -2415,81 +1968,54 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
         </div>
       )}
 
-      {/* Chore assignment grid */}
+      {/* Chore cards — mobile-friendly, no wide grid */}
       {activeFreq !== "daily_all" && (
-        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, overflow:"hidden", marginBottom:12 }}>
-          {/* Header row */}
-          <div style={{ display:"grid", gridTemplateColumns:`1fr ${family.map(()=>"56px").join(" ")} 72px`, background:T.stone, padding:"10px 12px", gap:6 }}>
-            <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub }}>Chore</div>
-            {family.map(m => (
-              <div key={m.id} style={{ textAlign:"center", fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:T.sub }}>
-                {m.emoji}<br/>{m.name}
-              </div>
-            ))}
-            <div style={{ textAlign:"center", fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:T.sub }}>Actions</div>
-          </div>
-
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12 }}>
           {choresForView.length === 0 && (
             <div style={{ textAlign:"center", padding:"24px", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No chores yet — add one below</div>
           )}
-
-          {choresForView.map((chore, i) => {
+          {choresForView.map((chore) => {
             const assigned = choreAssignments[chore] || [];
             const isEditing = editingChore?.oldLabel === chore;
-            const isCustom = (customChores[activeFreq === "weekly" ? `weekly_${activeDow}` : activeFreq] || []).includes(chore);
             return (
-              <div key={chore} style={{
-                display:"grid", gridTemplateColumns:`1fr ${family.map(()=>"56px").join(" ")} 72px`,
-                padding:"8px 12px", gap:6, alignItems:"center",
-                background: i%2===0 ? T.white : "#FAFAF8",
-                borderTop: `1px solid ${T.border}`,
-              }}>
-                {/* Chore name - tap to edit */}
-                <div>
+              <div key={chore} style={{ background:T.white, borderRadius:14, border:`1.5px solid ${T.border}`, padding:"12px 14px" }}>
+                {/* Chore name row */}
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
                   {isEditing ? (
                     <input
                       autoFocus
                       value={editingChore.newLabel ?? chore}
                       onChange={e => setEditingChore(ec => ({ ...ec, newLabel: e.target.value }))}
-                      onBlur={e => renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow)}
+                      onBlur={() => renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow)}
                       onKeyDown={e => {
                         if (e.key === "Enter") renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow);
                         if (e.key === "Escape") setEditingChore(null);
                       }}
-                      style={{ width:"100%", padding:"4px 8px", borderRadius:8, border:`2px solid ${freq.color}`, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, boxSizing:"border-box" }}
+                      style={{ flex:1, padding:"6px 10px", borderRadius:8, border:`2px solid ${freq?.color||"#ccc"}`, fontFamily:"'Nunito',sans-serif", fontSize:14, fontWeight:600 }}
                     />
                   ) : (
-                    <div
-                      onClick={() => setEditingChore({ oldLabel: chore })}
-                      style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text, cursor:"pointer", padding:"4px 0", display:"flex", alignItems:"center", gap:6 }}
-                    >
-                      {chore}
-                      <span style={{ fontSize:10, color:T.muted, opacity:0.5 }}>✏️</span>
+                    <div onClick={() => setEditingChore({ oldLabel:chore, newLabel:chore })} style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:14, fontWeight:600, color:T.text, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
+                      {chore}<span style={{ fontSize:10, opacity:0.4 }}>✏️</span>
                     </div>
                   )}
+                  <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ flexShrink:0, width:30, height:30, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 }}>×</button>
                 </div>
-
-                {/* Assignment toggles */}
-                {family.map(m => {
-                  const isOn = assigned.includes(m.id);
-                  return (
-                    <div key={m.id} style={{ display:"flex", justifyContent:"center" }}>
-                      <button onClick={() => toggleAssignment(chore, m.id)} style={{
-                        width:32, height:32, borderRadius:"50%",
-                        border:`2.5px solid ${isOn ? m.color : T.border}`,
+                {/* Assignment toggles — horizontal */}
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                  {family.map(m => {
+                    const isOn = assigned.includes(m.id);
+                    return (
+                      <button key={m.id} onClick={() => toggleAssignment(chore, m.id)} style={{
+                        display:"flex", alignItems:"center", gap:5, padding:"5px 12px", borderRadius:99,
+                        border:`2px solid ${isOn ? m.color : T.border}`,
                         background: isOn ? m.color : "transparent",
-                        cursor:"pointer", fontSize:14, display:"flex",
-                        alignItems:"center", justifyContent:"center",
+                        cursor:"pointer", transition:"all 0.15s",
                       }}>
-                        {isOn && <span style={{ color:"#fff", fontSize:12 }}>✓</span>}
+                        <span style={{ fontSize:14 }}>{m.emoji}</span>
+                        <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color: isOn?"#fff":T.sub }}>{m.name}</span>
                       </button>
-                    </div>
-                  );
-                })}
-
-                {/* Actions: delete any chore */}
-                <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
-                  <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
+                    );
+                  })}
                 </div>
               </div>
             );
@@ -2499,7 +2025,7 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
 
       {/* Add custom chore */}
       {activeFreq !== "daily_all" && (
-        <div style={{ marginBottom:16 }}>
+        <div style={{ marginTop:4 }}>
           {addingChore ? (
             <div style={{ display:"flex", gap:8 }}>
               <input
@@ -2507,38 +2033,18 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
                 value={newChoreName}
                 onChange={e => setNewChoreName(e.target.value)}
                 onKeyDown={e => { if (e.key==="Enter") addCustomChore(); if (e.key==="Escape") setAddingChore(false); }}
-                placeholder="Enter chore name..."
-                style={{ flex:1, padding:"10px 14px", borderRadius:12, border:`2px solid ${freq.color}`, fontFamily:"'Fredoka',sans-serif", fontSize:14 }}
+                placeholder="New chore name…"
+                style={{ flex:1, padding:"10px 14px", borderRadius:10, border:`2px solid ${freq?.color||T.border}`, fontFamily:"'Nunito',sans-serif", fontSize:14, fontWeight:600 }}
               />
-              <button onClick={addCustomChore} style={{ padding:"10px 18px", borderRadius:12, background:freq.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer" }}>Add</button>
-              <button onClick={() => setAddingChore(false)} style={{ padding:"10px 14px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, cursor:"pointer" }}>Cancel</button>
+              <button onClick={addCustomChore} style={{ padding:"10px 18px", borderRadius:10, background:"#2D7A56", color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer" }}>Add</button>
+              <button onClick={() => setAddingChore(false)} style={{ padding:"10px 14px", borderRadius:10, background:T.stone, color:T.sub, border:"none", cursor:"pointer" }}>Cancel</button>
             </div>
           ) : (
-            <button onClick={() => setAddingChore(true)} style={{ width:"100%", padding:"11px", borderRadius:12, border:`2px dashed ${freq.color}88`, background:"transparent", color:freq.color, fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer" }}>
-              + Add Custom Chore
+            <button onClick={() => setAddingChore(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 18px", borderRadius:12, background:T.stone, border:`2px dashed ${T.border}`, cursor:"pointer", width:"100%" }}>
+              <span style={{ fontSize:18, color:T.muted }}>+</span>
+              <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, color:T.sub }}>Add custom chore</span>
             </button>
           )}
-        </div>
-      )}
-
-      {/* Summary */}
-      {activeFreq !== "daily_all" && (
-        <div style={{ marginTop:8 }}>
-          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:T.text, marginBottom:8 }}>Assignment Summary</div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-            {family.map(m => {
-              const count = choresForView.filter(c => (choreAssignments[c]||[]).includes(m.id)).length;
-              return (
-                <div key={m.id} style={{ background:m.light, border:`1.5px solid ${m.color}44`, borderRadius:12, padding:"8px 14px", display:"flex", alignItems:"center", gap:8 }}>
-                  <span style={{fontSize:18}}>{m.emoji}</span>
-                  <div>
-                    <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:m.color }}>{m.name}</div>
-                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>{count} chore{count!==1?"s":""} assigned</div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
         </div>
       )}
     </div>
@@ -2855,6 +2361,7 @@ function AppInner() {
 
   const [events,           setEvents]           = useState([]);
   const [choreAssignments, setChoreAssignments] = useState({});
+  const [customChores,     setCustomChores]     = useState({});
   const [tasks,            setTasks]            = useState(INIT_TASKS);
   const [goals,            setGoals]            = useState(INIT_GOALS);
   const [streaks,          setStreaks]           = useState(INIT_STREAKS);
@@ -2864,6 +2371,11 @@ function AppInner() {
   const [allCompletions,   setAllCompletions]    = useState([]);
   const [dbTaskRows,       setDbTaskRows]        = useState([]);
   const [dbGoalRows,       setDbGoalRows]        = useState([]);
+
+  async function saveCustomChores(next) {
+    setCustomChores(next);
+    try { await SB.upsertSetting("custom_chores", JSON.stringify(next)); } catch(e) { console.error("saveCustomChores error:", e); }
+  }
 
   async function loadAll() {
     setLoading(true);
@@ -2909,10 +2421,24 @@ function AppInner() {
       if (msgRows && msgRows[0] && msgRows[0].value) {
         setScreensaverMsg(msgRows[0].value);
       } else {
-        // Fallback to localStorage
         try {
           const local = localStorage.getItem("familyos_screensaver_msg");
           if (local) setScreensaverMsg(local);
+        } catch {}
+      }
+      // Load custom chores from Supabase — syncs across all devices
+      const choreSettingRows = await SB.getSetting("custom_chores").catch(() => []);
+      if (choreSettingRows && choreSettingRows[0] && choreSettingRows[0].value) {
+        try { setCustomChores(JSON.parse(choreSettingRows[0].value)); } catch {}
+      } else {
+        // One-time migration from localStorage → Supabase
+        try {
+          const local = localStorage.getItem("familyos_customChores");
+          if (local) {
+            const parsed = JSON.parse(local);
+            setCustomChores(parsed);
+            SB.upsertSetting("custom_chores", local).catch(() => {});
+          }
         } catch {}
       }
       const allCompRows = await sb("task_completions", "GET", null,
@@ -2932,22 +2458,18 @@ function AppInner() {
     const overrideStyle = document.createElement('style');
     overrideStyle.textContent = `
       #root{max-width:100%!important;width:100%!important;margin:0!important;padding:0!important;}
+      /* Force color emoji on all platforms including Windows touchscreens */
       * { font-variant-emoji: emoji; }
-      [style*="Fredoka"] {
-        font-family: "Fredoka", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif !important;
-      }
-      [style*="Nunito"] {
-        font-family: "Nunito", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif !important;
-      }
-      span, button, div {
-        font-family: "Fredoka", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+      .emoji-text, span[style*="fontSize"] {
+        font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", "Twemoji Mozilla", sans-serif !important;
       }
     `;
     document.head.appendChild(overrideStyle);
 
+    // Load Noto Color Emoji font for Windows touchscreen emoji support
     const emojiFont = document.createElement('link');
     emojiFont.rel = 'stylesheet';
-    emojiFont.href = 'https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800;900&display=swap';
+    emojiFont.href = 'https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap';
     document.head.appendChild(emojiFont);
 
     // ── Touchscreen monitor scroll fix ──────────────────────────────────────
@@ -3075,6 +2597,7 @@ function AppInner() {
     family={family} events={events} setEvents={setEvents}
     tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals}
     choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments}
+    customChores={customChores} saveCustomChores={saveCustomChores}
     dbTaskRows={dbTaskRows} dbGoalRows={dbGoalRows} onReload={loadAll}
     screensaverMsg={screensaverMsg} setScreensaverMsg={setScreensaverMsg}
   />;
@@ -3084,19 +2607,14 @@ function AppInner() {
       {screensaverEl}
       <TopBar onAdmin={goAdmin} />
       {page==="calendar" && <CalendarPage family={family} events={events} />}
-      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} allCompletions={allCompletions}
-        onCompletionChange={() => {
-          sb("task_completions", "GET", null,
-            `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
-          ).then(rows => setAllCompletions(rows || []));
-        }}
+      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores}
         onRainbowDay={(memberId, dateStr) => {
           SB.logRainbowDay(memberId, dateStr);
           SB.getRainbowDays().then(r => setRainbowDays(r||[]));
         }} />}
       {page==="progress" && <ProgressPage family={family} goals={goals} setGoals={setGoals}
         streaks={streaks} weekPts={weekPts} rainbowDays={rainbowDays}
-        allCompletions={allCompletions} tasks={tasks} dbGoalRows={dbGoalRows} choreAssignments={choreAssignments} />}
+        allCompletions={allCompletions} tasks={tasks} dbGoalRows={dbGoalRows} />}
       <BottomNav page={page} onPage={setPage} />
     </div>
   );
