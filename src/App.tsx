@@ -281,14 +281,32 @@ const INIT_CHORE_ASSIGNMENTS = {};
 function getChoresForDate(date, choreAssignments, customChores) {
   const dow = date.getDay();
   const cc = customChores || {};
+
+  // Is it the 1st Thursday of the month?
+  function isFirstThursday(d) {
+    return d.getDay() === 4 && d.getDate() <= 7;
+  }
+  // Is it the 1st Thursday of a quarter? (Jan, Apr, Jul, Oct)
+  function isFirstThursdayOfQuarter(d) {
+    return isFirstThursday(d) && [0,3,6,9].includes(d.getMonth());
+  }
+  // Is it the 1st Thursday of semi-annual? (Jan, Jul)
+  function isFirstThursdayOfSemiAnnual(d) {
+    return isFirstThursday(d) && [0,6].includes(d.getMonth());
+  }
+  // Is it Jan 1st Thursday (annual)?
+  function isFirstThursdayOfYear(d) {
+    return isFirstThursday(d) && d.getMonth() === 0;
+  }
+
+  let allChores = [];
+
+  // Always add daily-all chores
+  DAILY_CHORES_ALL.forEach(c => allChores.push({ label:c, assignedTo:"all" }));
+
+  // Resolve a chore list applying renames and hidden entries from customChores
   const renames = cc._renames || {};
-  const hidden = new Set(cc._hidden || []);
-
-  function isFirstThursday(d) { return d.getDay() === 4 && d.getDate() <= 7; }
-  function isFirstThursdayOfQuarter(d) { return isFirstThursday(d) && [0,3,6,9].includes(d.getMonth()); }
-  function isFirstThursdayOfSemiAnnual(d) { return isFirstThursday(d) && [0,6].includes(d.getMonth()); }
-  function isFirstThursdayOfYear(d) { return isFirstThursday(d) && d.getMonth() === 0; }
-
+  const hidden  = new Set(cc._hidden  || []);
   function resolveList(base, key) {
     const custom = cc[key] || [];
     const renamedOrig = Object.keys(renames).filter(k => k.startsWith(key+"|")).map(k => k.slice((key+"|").length));
@@ -299,14 +317,13 @@ function getChoresForDate(date, choreAssignments, customChores) {
     return [...resolved, ...custom.filter(c => !hidden.has(key+"|"+c) && !seen.has(c))];
   }
 
-  let allChores = [];
-  DAILY_CHORES_ALL.forEach(c => allChores.push({ label:c, assignedTo:"all" }));
   resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
   resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
-  if (isFirstThursday(date)) resolveList(MONTHLY_CHORES, "monthly").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly" }));
-  if (isFirstThursdayOfQuarter(date)) resolveList(QUARTERLY_CHORES, "quarterly").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly" }));
+  if (isFirstThursday(date))           resolveList(MONTHLY_CHORES,     "monthly"    ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly"     }));
+  if (isFirstThursdayOfQuarter(date))  resolveList(QUARTERLY_CHORES,   "quarterly"  ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly"   }));
   if (isFirstThursdayOfSemiAnnual(date)) resolveList(SEMI_ANNUAL_CHORES, "semi_annual").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
-  if (isFirstThursdayOfYear(date)) resolveList(ANNUAL_CHORES, "annual").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"annual" }));
+  if (isFirstThursdayOfYear(date))     resolveList(ANNUAL_CHORES,      "annual"     ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"annual"      }));
+
   return allChores;
 }
 
@@ -1835,8 +1852,7 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
   const [addingChore, setAddingChore] = useState(false);
   const [newChoreName, setNewChoreName] = useState("");
 
-  // customChores and saveCustomChores are now Supabase-backed (passed from AppInner)
-  // so all devices stay in sync automatically
+  // customChores + saveCustomChores come from AppInner (Supabase-backed, syncs all devices)
 
   function getChorelist(freqId, dow) {
     const base = freqId === "weekly"
@@ -1858,8 +1874,7 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
   function addCustomChore() {
     if (!newChoreName.trim()) return;
     const key = activeFreq === "weekly" ? `weekly_${activeDow}` : activeFreq;
-    const cc = customChores || {};
-    const next = { ...cc, [key]: [...(cc[key]||[]), newChoreName.trim()] };
+    const next = { ...customChores, [key]: [...(customChores[key]||[]), newChoreName.trim()] };
     saveCustomChores(next);
     setNewChoreName("");
     setAddingChore(false);
@@ -1875,9 +1890,10 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
     const existingIdx = custom.indexOf(oldLabel);
     let next = { ...cc };
     if (existingIdx >= 0) {
+      // Custom chore — rename in list
       next = { ...next, [key]: custom.map((c,i) => i===existingIdx ? trimmed : c) };
     } else {
-      // Built-in — store rename and scrub any accidental duplicate from custom list
+      // Built-in chore — store rename in _renames, scrub duplicate from custom
       const renames = cc._renames || {};
       next = { ...next, _renames: { ...renames, [key+"|"+oldLabel]: trimmed } };
       if (custom.includes(trimmed)) next = { ...next, [key]: custom.filter(c => c !== trimmed) };
@@ -1901,25 +1917,30 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
     const custom = cc[key] || [];
     const renames = cc._renames || {};
     const renameEntry = Object.entries(renames).find(([k,v]) => k.startsWith(key+"|") && v===label);
+    const base = freqId === "weekly" ? (WEEKLY_CHORES[dow]||[]) : (FREQ_GROUPS.find(f=>f.id===freqId)?.chores||[]);
     let next = { ...cc };
     if (custom.includes(label)) next = { ...next, [key]: custom.filter(c => c !== label) };
     if (renameEntry) {
-      const nextRenames = { ...renames }; delete nextRenames[renameEntry[0]];
+      const nr = { ...renames }; delete nr[renameEntry[0]];
       const origLabel = renameEntry[0].slice((key+"|").length);
-      next = { ...next, _renames: nextRenames, _hidden: [...(cc._hidden||[]), key+"|"+origLabel] };
-    } else {
-      const base = freqId === "weekly" ? (WEEKLY_CHORES[dow]||[]) : (FREQ_GROUPS.find(f=>f.id===freqId)?.chores||[]);
-      if (base.includes(label)) next = { ...next, _hidden: [...(cc._hidden||[]), key+"|"+label] };
+      next = { ...next, _renames: nr, _hidden: [...(cc._hidden||[]), key+"|"+origLabel] };
+    } else if (base.includes(label)) {
+      next = { ...next, _hidden: [...(cc._hidden||[]), key+"|"+label] };
     }
     saveCustomChores(next);
     setChoreAssignments(prev => { const u={...prev}; delete u[label]; SB.upsertChore(label,[]); return u; });
   }
 
   async function toggleAssignment(chore, memberId) {
+    // Read from ref to always get the latest value (avoids stale closure)
     const current = choreAssignmentsRef.current[chore] || [];
     const isOn = current.includes(memberId);
-    const updated = isOn ? current.filter(id=>id!==memberId) : [...current, memberId];
+    const updated = isOn
+      ? current.filter(id => id !== memberId)
+      : [...current, memberId];
+    // Update state immediately
     setChoreAssignments(prev => ({ ...prev, [chore]: updated }));
+    // Save to Supabase
     await SB.upsertChore(chore, updated);
   }
 
@@ -1933,33 +1954,43 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
         Assign chores to family members. Tap a chore name to rename it. Use + to add custom chores.
       </p>
 
-      {/* Freq tabs — scrollable on mobile */}
-      <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:4 }}>
-        {[{id:"daily_all",label:"Daily (Everyone)"},{id:"daily_ind",label:"Daily (Assign)"},{id:"weekly",label:"Weekly"},{id:"monthly",label:"Monthly"},{id:"quarterly",label:"Quarterly"},{id:"semi_annual",label:"Semi-Annual"},{id:"annual",label:"Annual"}].map(f => (
-          <button key={f.id} onClick={() => setActiveFreq(f.id)} style={{ flexShrink:0, padding:"8px 14px", borderRadius:99, border:"none", cursor:"pointer", background: activeFreq===f.id?"#2D7A56":"#E8E4DD", color: activeFreq===f.id?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600, whiteSpace:"nowrap" }}>{f.label}</button>
+      {/* Frequency tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", paddingBottom:4 }}>
+        {FREQ_GROUPS.map(f => (
+          <button key={f.id} onClick={() => setActiveFreq(f.id)} style={{
+            padding:"8px 14px", borderRadius:99, border:"none", cursor:"pointer", flexShrink:0,
+            background: activeFreq===f.id ? f.color : T.stone,
+            color: activeFreq===f.id ? "#fff" : T.sub,
+            fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
+          }}>{f.label}</button>
         ))}
       </div>
 
-      {/* Day-of-week picker for weekly */}
-      {activeFreq === "weekly" && (
-        <div style={{ display:"flex", gap:6, marginBottom:14, overflowX:"auto", WebkitOverflowScrolling:"touch", paddingBottom:2 }}>
-          {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d,i) => (
-            <button key={i} onClick={() => setActiveDow(i)} style={{ flexShrink:0, padding:"7px 12px", borderRadius:99, border:"none", cursor:"pointer", background: activeDow===i?"#3B6FA0":"#E8E4DD", color: activeDow===i?"#fff":T.sub, fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:600 }}>{d}</button>
-          ))}
-        </div>
-      )}
+      {/* Description */}
+      <div style={{ background:freq.color+"18", border:`1.5px solid ${freq.color}44`, borderRadius:12, padding:"10px 14px", marginBottom:16 }}>
+        <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.sub }}>{freq.desc}</span>
+      </div>
 
-      {/* Freq description */}
-      {freq && (
-        <div style={{ background: freq.color+"18", border:`1.5px solid ${freq.color}44`, borderRadius:12, padding:"10px 14px", marginBottom:14 }}>
-          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.sub, fontWeight:600 }}>{freq.desc}</div>
+      {/* Day of week picker for weekly */}
+      {activeFreq === "weekly" && (
+        <div style={{ display:"flex", gap:6, marginBottom:16 }}>
+          {DOW_LABELS_FULL.map((d, i) => (
+            <button key={i} onClick={() => setActiveDow(i)} style={{
+              flex:1, padding:"8px 4px", borderRadius:10, border:"none", cursor:"pointer",
+              background: activeDow===i ? freq.color : T.stone,
+              color: activeDow===i ? "#fff" : T.sub,
+              fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700,
+            }}>{d.slice(0,3)}</button>
+          ))}
         </div>
       )}
 
       {/* Daily-all notice */}
       {activeFreq === "daily_all" && (
         <div style={{ background:"#F0FDF4", border:"1.5px solid #86EFAC", borderRadius:12, padding:"12px 16px", marginBottom:16 }}>
-          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:"#166534", fontWeight:600 }}>✅ These chores are automatically assigned to everyone — no action needed.</div>
+          <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:"#166534", fontWeight:600 }}>
+            ✅ These chores are automatically assigned to everyone — no action needed.
+          </div>
           <div style={{ marginTop:8, display:"flex", flexWrap:"wrap", gap:6 }}>
             {DAILY_CHORES_ALL.map(c => (
               <div key={c} style={{ background:"#DCFCE7", color:"#166534", borderRadius:99, padding:"4px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600 }}>{c}</div>
@@ -1968,19 +1999,37 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
         </div>
       )}
 
-      {/* Chore cards — mobile-friendly, no wide grid */}
+      {/* Chore assignment grid */}
       {activeFreq !== "daily_all" && (
-        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:12 }}>
+        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, overflow:"hidden", marginBottom:12 }}>
+          {/* Header row */}
+          <div style={{ display:"grid", gridTemplateColumns:`1fr ${family.map(()=>"56px").join(" ")} 72px`, background:T.stone, padding:"10px 12px", gap:6 }}>
+            <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub }}>Chore</div>
+            {family.map(m => (
+              <div key={m.id} style={{ textAlign:"center", fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:T.sub }}>
+                {m.emoji}<br/>{m.name}
+              </div>
+            ))}
+            <div style={{ textAlign:"center", fontFamily:"'Fredoka',sans-serif", fontSize:11, fontWeight:700, color:T.sub }}>Actions</div>
+          </div>
+
           {choresForView.length === 0 && (
             <div style={{ textAlign:"center", padding:"24px", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:14 }}>No chores yet — add one below</div>
           )}
-          {choresForView.map((chore) => {
+
+          {choresForView.map((chore, i) => {
             const assigned = choreAssignments[chore] || [];
             const isEditing = editingChore?.oldLabel === chore;
+            const isCustom = (customChores[activeFreq === "weekly" ? `weekly_${activeDow}` : activeFreq] || []).includes(chore);
             return (
-              <div key={chore} style={{ background:T.white, borderRadius:14, border:`1.5px solid ${T.border}`, padding:"12px 14px" }}>
-                {/* Chore name row */}
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+              <div key={chore} style={{
+                display:"grid", gridTemplateColumns:`1fr ${family.map(()=>"56px").join(" ")} 72px`,
+                padding:"8px 12px", gap:6, alignItems:"center",
+                background: i%2===0 ? T.white : "#FAFAF8",
+                borderTop: `1px solid ${T.border}`,
+              }}>
+                {/* Chore name - tap to edit */}
+                <div>
                   {isEditing ? (
                     <input
                       autoFocus
@@ -1991,31 +2040,40 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
                         if (e.key === "Enter") renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow);
                         if (e.key === "Escape") setEditingChore(null);
                       }}
-                      style={{ flex:1, padding:"6px 10px", borderRadius:8, border:`2px solid ${freq?.color||"#ccc"}`, fontFamily:"'Nunito',sans-serif", fontSize:14, fontWeight:600 }}
+                      style={{ width:"100%", padding:"4px 8px", borderRadius:8, border:`2px solid ${freq.color}`, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, boxSizing:"border-box" }}
                     />
                   ) : (
-                    <div onClick={() => setEditingChore({ oldLabel:chore, newLabel:chore })} style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:14, fontWeight:600, color:T.text, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}>
-                      {chore}<span style={{ fontSize:10, opacity:0.4 }}>✏️</span>
+                    <div
+                      onClick={() => setEditingChore({ oldLabel: chore, newLabel: chore })}
+                      style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text, cursor:"pointer", padding:"4px 0", display:"flex", alignItems:"center", gap:6 }}
+                    >
+                      {chore}
+                      <span style={{ fontSize:10, color:T.muted, opacity:0.5 }}>✏️</span>
                     </div>
                   )}
-                  <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ flexShrink:0, width:30, height:30, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:16, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", lineHeight:1 }}>×</button>
                 </div>
-                {/* Assignment toggles — horizontal */}
-                <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-                  {family.map(m => {
-                    const isOn = assigned.includes(m.id);
-                    return (
-                      <button key={m.id} onClick={() => toggleAssignment(chore, m.id)} style={{
-                        display:"flex", alignItems:"center", gap:5, padding:"5px 12px", borderRadius:99,
-                        border:`2px solid ${isOn ? m.color : T.border}`,
+
+                {/* Assignment toggles */}
+                {family.map(m => {
+                  const isOn = assigned.includes(m.id);
+                  return (
+                    <div key={m.id} style={{ display:"flex", justifyContent:"center" }}>
+                      <button onClick={() => toggleAssignment(chore, m.id)} style={{
+                        width:32, height:32, borderRadius:"50%",
+                        border:`2.5px solid ${isOn ? m.color : T.border}`,
                         background: isOn ? m.color : "transparent",
-                        cursor:"pointer", transition:"all 0.15s",
+                        cursor:"pointer", fontSize:14, display:"flex",
+                        alignItems:"center", justifyContent:"center",
                       }}>
-                        <span style={{ fontSize:14 }}>{m.emoji}</span>
-                        <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color: isOn?"#fff":T.sub }}>{m.name}</span>
+                        {isOn && <span style={{ color:"#fff", fontSize:12 }}>✓</span>}
                       </button>
-                    );
-                  })}
+                    </div>
+                  );
+                })}
+
+                {/* Actions: delete any chore */}
+                <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
+                  <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
                 </div>
               </div>
             );
@@ -2025,7 +2083,7 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
 
       {/* Add custom chore */}
       {activeFreq !== "daily_all" && (
-        <div style={{ marginTop:4 }}>
+        <div style={{ marginBottom:16 }}>
           {addingChore ? (
             <div style={{ display:"flex", gap:8 }}>
               <input
@@ -2033,18 +2091,38 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
                 value={newChoreName}
                 onChange={e => setNewChoreName(e.target.value)}
                 onKeyDown={e => { if (e.key==="Enter") addCustomChore(); if (e.key==="Escape") setAddingChore(false); }}
-                placeholder="New chore name…"
-                style={{ flex:1, padding:"10px 14px", borderRadius:10, border:`2px solid ${freq?.color||T.border}`, fontFamily:"'Nunito',sans-serif", fontSize:14, fontWeight:600 }}
+                placeholder="Enter chore name..."
+                style={{ flex:1, padding:"10px 14px", borderRadius:12, border:`2px solid ${freq.color}`, fontFamily:"'Fredoka',sans-serif", fontSize:14 }}
               />
-              <button onClick={addCustomChore} style={{ padding:"10px 18px", borderRadius:10, background:"#2D7A56", color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer" }}>Add</button>
-              <button onClick={() => setAddingChore(false)} style={{ padding:"10px 14px", borderRadius:10, background:T.stone, color:T.sub, border:"none", cursor:"pointer" }}>Cancel</button>
+              <button onClick={addCustomChore} style={{ padding:"10px 18px", borderRadius:12, background:freq.color, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer" }}>Add</button>
+              <button onClick={() => setAddingChore(false)} style={{ padding:"10px 14px", borderRadius:12, background:T.stone, color:T.sub, border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:14, cursor:"pointer" }}>Cancel</button>
             </div>
           ) : (
-            <button onClick={() => setAddingChore(true)} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 18px", borderRadius:12, background:T.stone, border:`2px dashed ${T.border}`, cursor:"pointer", width:"100%" }}>
-              <span style={{ fontSize:18, color:T.muted }}>+</span>
-              <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600, color:T.sub }}>Add custom chore</span>
+            <button onClick={() => setAddingChore(true)} style={{ width:"100%", padding:"11px", borderRadius:12, border:`2px dashed ${freq.color}88`, background:"transparent", color:freq.color, fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, cursor:"pointer" }}>
+              + Add Custom Chore
             </button>
           )}
+        </div>
+      )}
+
+      {/* Summary */}
+      {activeFreq !== "daily_all" && (
+        <div style={{ marginTop:8 }}>
+          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:T.text, marginBottom:8 }}>Assignment Summary</div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+            {family.map(m => {
+              const count = choresForView.filter(c => (choreAssignments[c]||[]).includes(m.id)).length;
+              return (
+                <div key={m.id} style={{ background:m.light, border:`1.5px solid ${m.color}44`, borderRadius:12, padding:"8px 14px", display:"flex", alignItems:"center", gap:8 }}>
+                  <span style={{fontSize:18}}>{m.emoji}</span>
+                  <div>
+                    <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:m.color }}>{m.name}</div>
+                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>{count} chore{count!==1?"s":""} assigned</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
@@ -2372,11 +2450,6 @@ function AppInner() {
   const [dbTaskRows,       setDbTaskRows]        = useState([]);
   const [dbGoalRows,       setDbGoalRows]        = useState([]);
 
-  async function saveCustomChores(next) {
-    setCustomChores(next);
-    try { await SB.upsertSetting("custom_chores", JSON.stringify(next)); } catch(e) { console.error("saveCustomChores error:", e); }
-  }
-
   async function loadAll() {
     setLoading(true);
     try {
@@ -2421,26 +2494,34 @@ function AppInner() {
       if (msgRows && msgRows[0] && msgRows[0].value) {
         setScreensaverMsg(msgRows[0].value);
       } else {
+        // Fallback to localStorage
         try {
           const local = localStorage.getItem("familyos_screensaver_msg");
           if (local) setScreensaverMsg(local);
         } catch {}
       }
-      // Load custom chores from Supabase — syncs across all devices
+      // Load custom chores from Supabase so all devices stay in sync
       const choreSettingRows = await SB.getSetting("custom_chores").catch(() => []);
       if (choreSettingRows && choreSettingRows[0] && choreSettingRows[0].value) {
-        try { setCustomChores(JSON.parse(choreSettingRows[0].value)); } catch {}
+        try {
+          const parsed = JSON.parse(choreSettingRows[0].value);
+          setCustomChores(parsed);
+          console.log("✅ custom_chores loaded from Supabase:", Object.keys(parsed));
+        } catch(e) { console.warn("custom_chores parse error:", e); }
       } else {
-        // One-time migration from localStorage → Supabase
+        // One-time migration: read localStorage → upload to Supabase
         try {
           const local = localStorage.getItem("familyos_customChores");
           if (local) {
             const parsed = JSON.parse(local);
             setCustomChores(parsed);
-            SB.upsertSetting("custom_chores", local).catch(() => {});
+            console.log("📤 Migrating customChores from localStorage to Supabase...");
+            await SB.upsertSetting("custom_chores", local);
+            console.log("📤 Migration complete");
           }
-        } catch {}
+        } catch(e) { console.warn("localStorage migration error:", e); }
       }
+
       const allCompRows = await sb("task_completions", "GET", null,
         `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
       ).catch(() => []);
@@ -2449,6 +2530,18 @@ function AppInner() {
       console.error("Load error:", e);
     }
     setLoading(false);
+  }
+
+  async function saveCustomChores(next) {
+    setCustomChores(next);
+    try {
+      await SB.upsertSetting("custom_chores", JSON.stringify(next));
+      console.log("💾 custom_chores saved to Supabase");
+    } catch(e) {
+      console.error("saveCustomChores Supabase error:", e);
+      // Fallback: at least keep it in localStorage so the current device works
+      try { localStorage.setItem("familyos_customChores", JSON.stringify(next)); } catch {}
+    }
   }
 
   useEffect(() => {
