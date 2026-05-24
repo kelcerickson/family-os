@@ -116,8 +116,8 @@ function dbEventsToApp(rows) {
 function dbTasksToApp(rows) {
   const result = {};
   (rows||[]).forEach(r => {
-    if (!result[r.member_id]) result[r.member_id] = { learn:[], exercise:[], contribute:[], goals:[] };
-    if (result[r.member_id][r.section]) result[r.member_id][r.section].push({
+    if (!result[r.member_id]) result[r.member_id] = { learn:[], exercise:[], contribute:[], goals:[], bonus:[], open:[] };
+    if (result[r.member_id][r.section] !== undefined) result[r.member_id][r.section].push({
       id: r.id, label: r.label, done: false,
       recurrence: r.recurrence || "daily",
       dows: (r.recurrence === "weekly" && r.dows) ? r.dows : null,
@@ -1299,18 +1299,12 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
 
   const streak = streaks[activeMember.id] || 0;
 
-  // ── Dynamic points from allCompletions ─────────────────────────────────────
-  // Rules: 1 pt per CORE section fully completed for the day
-  //        + bonusPoints per completed bonus task
-  // Chore section is checked against ALL completions for that date (since chores
-  // aren't in the tasks table, any chore completion = contribute section activity)
   function computePtsForMember(memberId, fromDateStr, toDateStr) {
     const memberComps = (allCompletions||[]).filter(c =>
       c.member_id === memberId &&
       c.completed_date >= fromDateStr &&
       c.completed_date <= toDateStr
     );
-    // Group completions by date
     const byDate = {};
     memberComps.forEach(c => {
       if (!byDate[c.completed_date]) byDate[c.completed_date] = [];
@@ -1319,29 +1313,23 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     const memberTasks = tasks[memberId] || {};
     let total = 0;
     Object.entries(byDate).forEach(([dateStr, completedLabels]) => {
-      // 1 pt per core section where all tasks completed that day
       for (const sec of ["learn","exercise","goals"]) {
         const secTasks = (memberTasks[sec]||[]).filter(t => {
-          // filter by recurrence for that date
           if (!t.recurrence || t.recurrence === "daily") return true;
           const d = new Date(dateStr + "T00:00:00");
           if (t.recurrence === "weekly") return (t.dows||[]).includes(d.getDay());
           if (t.recurrence === "once") return t.specificDate === dateStr;
           return true;
         });
-        if (secTasks.length > 0 && secTasks.every(t => completedLabels.includes(t.label))) {
-          total += 1;
-        }
+        if (secTasks.length > 0 && secTasks.every(t => completedLabels.includes(t.label))) total += 1;
       }
-      // Contribute: any chore completion on this date = section active
-      // We count it as done if at least one chore was completed
-      // (can't reconstruct exact chore schedule from ProgressPage without choreAssignments)
-      const choreComps = completedLabels.filter(lbl =>
-        !Object.values(memberTasks).flat().some(t => t.label === lbl)
-      );
-      if (choreComps.length > 0) total += 1;
-
-      // Bonus tasks: add bonusPoints per completed bonus task
+      // Contribute: any label not in learn/exercise/goals/bonus = chore completion
+      const allKnownLabels = new Set([
+        ...(memberTasks.learn||[]), ...(memberTasks.exercise||[]),
+        ...(memberTasks.goals||[]), ...(memberTasks.bonus||[]), ...(memberTasks.open||[])
+      ].map(t => t.label));
+      if (completedLabels.some(lbl => !allKnownLabels.has(lbl))) total += 1;
+      // Bonus tasks
       for (const t of (memberTasks.bonus||[])) {
         if (completedLabels.includes(t.label)) total += (t.bonusPoints || 1);
       }
@@ -1349,21 +1337,15 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     return total;
   }
 
-  function dateStr(d) {
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-
-  const todayD    = getMountainToday();
-  const todayS    = dateStr(todayD);
-  const todayPts  = computePtsForMember(activeMember.id, todayS, todayS);
-
-  const thisMonD  = new Date(todayD);
-  thisMonD.setDate(todayD.getDate() - ((todayD.getDay()+6)%7));
-  const wPts      = computePtsForMember(activeMember.id, dateStr(thisMonD), todayS);
-
-  const lastMonD  = new Date(thisMonD); lastMonD.setDate(thisMonD.getDate()-7);
-  const lastSunD  = new Date(thisMonD); lastSunD.setDate(thisMonD.getDate()-1);
-  const lastWeekPts = computePtsForMember(activeMember.id, dateStr(lastMonD), dateStr(lastSunD));
+  function ds(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+  const todayD = getMountainToday();
+  const todayS = ds(todayD);
+  const todayPts = computePtsForMember(activeMember.id, todayS, todayS);
+  const monD = new Date(todayD); monD.setDate(todayD.getDate() - ((todayD.getDay()+6)%7));
+  const wPts = computePtsForMember(activeMember.id, ds(monD), todayS);
+  const lmD = new Date(monD); lmD.setDate(monD.getDate()-7);
+  const lsD = new Date(monD); lsD.setDate(monD.getDate()-1);
+  const lastWeekPts = computePtsForMember(activeMember.id, ds(lmD), ds(lsD));
 
   const earnedBadges = getEarnedBadges(activeMember.id);
 
@@ -1490,9 +1472,9 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
         {/* Points & Money — Today / This Week / Last Week */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:18 }}>
           {[
-            { label:"Today",     pts:todayPts,    dimmed:false },
-            { label:"This Week", pts:wPts,         dimmed:false },
-            { label:"Last Week", pts:lastWeekPts,  dimmed:true  },
+            { label:"Today",     pts:todayPts,   dimmed:false },
+            { label:"This Week", pts:wPts,        dimmed:false },
+            { label:"Last Week", pts:lastWeekPts, dimmed:true  },
           ].map(card => (
             <div key={card.label} style={{ background:card.dimmed?"#F5F3EF":T.white, border:`2px solid ${card.dimmed?T.stone:T.border}`, borderRadius:16, padding:"12px 8px", textAlign:"center" }}>
               <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:0.7, textTransform:"uppercase", marginBottom:5 }}>{card.label}</div>
@@ -2541,14 +2523,12 @@ function tripImageUrl(trip) {
   const kw = encodeURIComponent(trip.imageKeyword || trip.destination || "travel landscape");
   return `https://source.unsplash.com/featured/800x600?${kw}`;
 }
-
 function TripsPage({ trips, family }) {
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
   const today = getMountainToday();
   const sorted = [...(trips||[])].sort((a,b) => (a.startDate||"").localeCompare(b.startDate||""));
   const upcoming = sorted.filter(t => !t.startDate || new Date(t.startDate+"T00:00:00") >= today);
   const past     = sorted.filter(t =>  t.startDate && new Date(t.startDate+"T00:00:00")  < today);
-
   if (sorted.length === 0) {
     return (
       <div style={{ padding:"80px 24px", textAlign:"center", fontFamily:"'Fredoka',sans-serif" }}>
@@ -2558,16 +2538,13 @@ function TripsPage({ trips, family }) {
       </div>
     );
   }
-
   const [next, ...rest] = upcoming;
-
   return (
     <div style={{ paddingBottom:T.navH+16, background:T.bg, minHeight:"100vh" }}>
       <div style={{ padding:"16px 16px 12px" }}>
         <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color:T.text }}>✈️ Family Trips</div>
         <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted }}>{upcoming.length} upcoming · {past.length} completed</div>
       </div>
-
       {next && (() => {
         const days = tripDaysAway(next.startDate);
         const nights = tripNights(next.startDate, next.endDate);
@@ -2578,12 +2555,7 @@ function TripsPage({ trips, family }) {
             <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.85) 100%)" }} />
             <div style={{ position:"absolute", top:0, left:0, right:0, zIndex:2, padding:"16px 18px", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
               <div style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(6px)", borderRadius:99, padding:"5px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color:"#fff", letterSpacing:1 }}>NEXT UP</div>
-              {days !== null && days >= 0 && (
-                <div style={{ textAlign:"center", background:"rgba(0,0,0,0.35)", backdropFilter:"blur(8px)", borderRadius:16, padding:"10px 16px", border:"1px solid rgba(255,255,255,0.2)" }}>
-                  <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:52, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div>
-                  <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.9)", letterSpacing:1.2, textTransform:"uppercase" }}>days away</div>
-                </div>
-              )}
+              {days !== null && days >= 0 && <div style={{ textAlign:"center", background:"rgba(0,0,0,0.35)", backdropFilter:"blur(8px)", borderRadius:16, padding:"10px 16px", border:"1px solid rgba(255,255,255,0.2)" }}><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:52, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div><div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.9)", letterSpacing:1.2, textTransform:"uppercase" }}>days away</div></div>}
               {days !== null && days < 0 && <div style={{ background:"#2D7A56", borderRadius:16, padding:"8px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:"#fff" }}>Happening now! 🎉</div>}
             </div>
             <div style={{ position:"absolute", bottom:0, left:0, right:0, zIndex:2, padding:"20px 18px" }}>
@@ -2598,7 +2570,6 @@ function TripsPage({ trips, family }) {
           </div>
         );
       })()}
-
       {rest.length > 0 && (
         <div style={{ padding:"0 12px" }}>
           <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub, marginBottom:10, letterSpacing:.6 }}>COMING UP</div>
@@ -2624,7 +2595,6 @@ function TripsPage({ trips, family }) {
           </div>
         </div>
       )}
-
       {past.length > 0 && (
         <div style={{ padding:"0 12px" }}>
           <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.muted, marginBottom:10, letterSpacing:.6 }}>MEMORIES</div>
@@ -2647,17 +2617,14 @@ function TripsPage({ trips, family }) {
     </div>
   );
 }
-
 function AdminTrips({ family, trips, saveTrips }) {
   const EMPTY_TRIP = { destination:"", startDate:"", endDate:"", location:"", tripType:"", imageKeyword:"", photoUrl:"", memberIds:[] };
   const [form, setForm] = useState(EMPTY_TRIP);
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
-
   function startEdit(trip) { setForm({ ...EMPTY_TRIP, ...trip }); setEditingId(trip.id); setShowForm(true); window.scrollTo({ top:0, behavior:"smooth" }); }
   function cancelForm() { setForm(EMPTY_TRIP); setEditingId(null); setShowForm(false); }
-
   async function saveTripForm() {
     if (!form.destination || !form.startDate) { alert("Please enter a destination and start date."); return; }
     setSaving(true);
@@ -2668,15 +2635,12 @@ function AdminTrips({ family, trips, saveTrips }) {
     setSaving(false);
     cancelForm();
   }
-
   async function deleteTrip(id) {
     if (!window.confirm("Remove this trip?")) return;
     await saveTrips((trips||[]).filter(t => t.id !== id));
   }
-
   const TYPE_OPTIONS = ["🏖️ Beach","🏔️ Mountains","🏙️ City","🎿 Ski","🌲 National Park","🚢 Cruise","🌍 International","🎡 Theme Park","🏕️ Camping","👨‍👩‍👧‍👦 Family Visit"];
   const sorted = [...(trips||[])].sort((a,b) => (a.startDate||"").localeCompare(b.startDate||""));
-
   return (
     <div>
       <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>✈️ Trips</h2>
@@ -2684,10 +2648,7 @@ function AdminTrips({ family, trips, saveTrips }) {
       {showForm && (
         <div style={{ background:T.white, borderRadius:16, border:`2px solid ${editingId?"#3B6FA0":T.border}`, padding:"18px 20px", marginBottom:20 }}>
           <h3 style={{ fontSize:17, fontWeight:700, color:editingId?"#3B6FA0":T.text, margin:"0 0 16px" }}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
-          <div style={{ marginBottom:12 }}>
-            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Destination *</label>
-            <input value={form.destination} onChange={e=>setForm(f=>({...f,destination:e.target.value}))} placeholder="e.g. Outer Banks, Yellowstone" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:15, boxSizing:"border-box" }} />
-          </div>
+          <div style={{ marginBottom:12 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Destination *</label><input value={form.destination} onChange={e=>setForm(f=>({...f,destination:e.target.value}))} placeholder="e.g. Outer Banks, Yellowstone" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:15, boxSizing:"border-box" }} /></div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
             <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Date *</label><input type="date" value={form.startDate} onChange={e=>setForm(f=>({...f,startDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
             <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>End Date</label><input type="date" value={form.endDate} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
@@ -2696,10 +2657,7 @@ function AdminTrips({ family, trips, saveTrips }) {
           </div>
           <div style={{ marginBottom:12 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Photo Keyword <span style={{ fontWeight:400, color:T.muted }}>(auto-finds a background photo)</span></label><input value={form.imageKeyword} onChange={e=>setForm(f=>({...f,imageKeyword:e.target.value}))} placeholder="e.g. outer banks beach, yellowstone bison" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
           <div style={{ marginBottom:16 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Custom Photo URL <span style={{ fontWeight:400, color:T.muted }}>(optional — overrides keyword)</span></label><input value={form.photoUrl} onChange={e=>setForm(f=>({...f,photoUrl:e.target.value}))} placeholder="https://your-photo-url.jpg" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:13, boxSizing:"border-box" }} /></div>
-          <div style={{ marginBottom:16 }}>
-            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Who's Going?</label>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>{family.map(m => { const on=(form.memberIds||[]).includes(m.id); return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${on?m.color:T.border}`, background:on?m.color:"transparent", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:on?"#fff":T.sub }}>{m.emoji} {m.name}</button>; })}</div>
-          </div>
+          <div style={{ marginBottom:16 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Who's Going?</label><div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>{family.map(m => { const on=(form.memberIds||[]).includes(m.id); return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${on?m.color:T.border}`, background:on?m.color:"transparent", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:on?"#fff":T.sub }}>{m.emoji} {m.name}</button>; })}</div></div>
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={saveTripForm} disabled={saving} style={{ flex:1, padding:"12px", borderRadius:12, background:editingId?"#3B6FA0":T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
             <button onClick={cancelForm} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:14 }}>Cancel</button>
