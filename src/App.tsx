@@ -107,11 +107,21 @@ const SB = {
 
 // Convert DB rows to app format
 function dbEventsToApp(rows) {
-  return (rows||[]).map(r => ({
-    id: r.id, title: r.title, memberIds: r.member_ids,
-    startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
-    dows: r.dows, specificDate: r.specific_date, dow: (r.dows||[1])[0],
-  }));
+  return (rows||[]).map(r => {
+    const rawDows = r.dows || [1];
+    // Negative values encode the monthly week occurrence (e.g. -2 = 2nd occurrence)
+    const negEntry = rawDows.find(d => d < 0);
+    const monthlyWeek = negEntry ? Math.abs(negEntry) : 1;
+    const dows = rawDows.filter(d => d >= 0);
+    return {
+      id: r.id, title: r.title, memberIds: r.member_ids,
+      startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
+      dows: rawDows, // keep raw for encoding; recurrenceLabel filters internally
+      dow: dows[0] ?? 1,
+      specificDate: r.specific_date,
+      monthlyWeek,
+    };
+  });
 }
 function dbTasksToApp(rows) {
   const result = {};
@@ -584,11 +594,22 @@ function CalendarPage({ family, events }) {
   }, [calScrollRef[0]]);
   function eventMatchesDate(ev, date) {
     const dow = date.getDay();
-    // Support both old single dow and new dows array
-    const matchesDow = ev.dows ? ev.dows.includes(dow) : ev.dow === dow;
+    // Filter out negative values (monthly week encoding) before checking day match
+    const positiveDows = ev.dows ? ev.dows.filter(d => d >= 0) : null;
+    const matchesDow = positiveDows ? positiveDows.includes(dow) : ev.dow === dow;
     if (ev.recurrence === "daily") return true;
     if (ev.recurrence === "weekly") return matchesDow;
-    if (ev.recurrence === "monthly") return matchesDow && date.getDate() <= 7;
+    if (ev.recurrence === "monthly") {
+      if (!matchesDow) return false;
+      // Decode week occurrence from negative encoding in dows, or fall back to monthlyWeek prop
+      const rawNeg = ev.dows ? ev.dows.find(d => d < 0) : null;
+      const weekNum = rawNeg ? Math.abs(rawNeg) : (ev.monthlyWeek ?? 1);
+      if (weekNum === 5) {
+        const nextWeek = new Date(date); nextWeek.setDate(date.getDate() + 7);
+        return nextWeek.getMonth() !== date.getMonth();
+      }
+      return Math.ceil(date.getDate() / 7) === weekNum;
+    }
     if (ev.recurrence === "once" && ev.specificDate) {
       // Compare date strings directly to avoid timezone issues
       const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
@@ -1574,9 +1595,18 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   function recurrenceLabel(ev) {
     if (ev.recurrence === "once") return `Once · ${ev.specificDate}`;
     if (ev.recurrence === "daily") return "Every day";
-    const days = ev.dows ? ev.dows.map(i=>DOW_LABELS[i].slice(0,3)).join(", ") : (ev.dow !== undefined ? DOW_LABELS[ev.dow] : "");
+    // Filter out negative values (used to encode monthly week occurrence) before mapping to day names
+    const positiveDows = ev.dows ? ev.dows.filter(i => i >= 0) : [];
+    const days = positiveDows.length > 0
+      ? positiveDows.map(i => (DOW_LABELS[i] || "").slice(0,3)).join(", ")
+      : (ev.dow !== undefined ? (DOW_LABELS[ev.dow] || "") : "");
     if (ev.recurrence === "weekly") return `Every ${days}`;
-    if (ev.recurrence === "monthly") return `Monthly · ${days}`;
+    if (ev.recurrence === "monthly") {
+      // Extract the week occurrence from negative encoding
+      const weekNum = ev.dows ? Math.abs(ev.dows.find(i => i < 0) || -1) : 1;
+      const occLabel = ["1st","2nd","3rd","4th","Last"][weekNum-1] || "1st";
+      return `Monthly · ${occLabel} ${days}`;
+    }
     return ev.recurrence;
   }
 
@@ -2437,31 +2467,23 @@ function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
 
 
 
-// ════════════════════════════════════════════════════════════════════════════
-// TRIPS PAGE
-// ════════════════════════════════════════════════════════════════════════════
-
 function tripDaysAway(dateStr) {
   if (!dateStr) return null;
   const today = getMountainToday();
   const trip = new Date(dateStr + "T00:00:00");
   return Math.ceil((trip - today) / (1000 * 60 * 60 * 24));
 }
-
 function formatTripDates(startDate, endDate) {
   if (!startDate) return "";
   const opts = { month:"short", day:"numeric" };
   const start = new Date(startDate + "T00:00:00").toLocaleDateString("en-US", opts);
   if (!endDate) return start;
-  const end = new Date(endDate + "T00:00:00").toLocaleDateString("en-US", opts);
-  return `${start} – ${end}`;
+  return `${start} – ${new Date(endDate + "T00:00:00").toLocaleDateString("en-US", opts)}`;
 }
-
 function tripNights(startDate, endDate) {
   if (!startDate || !endDate) return 0;
   return Math.round((new Date(endDate+"T00:00:00") - new Date(startDate+"T00:00:00")) / (1000*60*60*24));
 }
-
 function tripImageUrl(trip) {
   if (trip.photoUrl) return trip.photoUrl;
   const kw = encodeURIComponent(trip.imageKeyword || trip.destination || "travel landscape");
@@ -2491,9 +2513,7 @@ function TripsPage({ trips, family }) {
     <div style={{ paddingBottom:T.navH+16, background:T.bg, minHeight:"100vh" }}>
       <div style={{ padding:"16px 16px 0" }}>
         <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color:T.text }}>✈️ Family Trips</div>
-        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted, marginBottom:16 }}>
-          {upcoming.length} upcoming · {past.length} completed
-        </div>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted, marginBottom:16 }}>{upcoming.length} upcoming · {past.length} completed</div>
       </div>
 
       {next && (() => {
@@ -2512,23 +2532,15 @@ function TripsPage({ trips, family }) {
                   <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:1, textTransform:"uppercase" }}>days away</div>
                 </div>
               )}
-              {days !== null && days < 0 && (
-                <div style={{ background:"#2D7A56", borderRadius:16, padding:"8px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:"#fff" }}>Happening now!</div>
-              )}
+              {days !== null && days < 0 && <div style={{ background:"#2D7A56", borderRadius:16, padding:"8px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:"#fff" }}>Happening now!</div>}
             </div>
             <div style={{ position:"relative", zIndex:2, padding:"60px 20px 20px" }}>
               <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:34, fontWeight:700, color:"#fff", lineHeight:1.1, textShadow:"0 2px 12px rgba(0,0,0,0.4)" }}>{next.destination}</div>
-              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:15, color:"rgba(255,255,255,0.88)", marginTop:4, marginBottom:14 }}>
-                {formatTripDates(next.startDate, next.endDate)}{nights > 0 ? ` · ${nights} night${nights!==1?"s":""}` : ""}
-              </div>
+              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:15, color:"rgba(255,255,255,0.88)", marginTop:4, marginBottom:14 }}>{formatTripDates(next.startDate, next.endDate)}{nights > 0 ? ` · ${nights} night${nights!==1?"s":""}` : ""}</div>
               <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-                {next.location  && <div style={{ background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>📍 {next.location}</div>}
-                {next.tripType  && <div style={{ background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>{next.tripType}</div>}
-                {members.length > 0 && (
-                  <div style={{ display:"flex", gap:4, marginLeft:"auto" }}>
-                    {members.map(m => <div key={m.id} style={{ width:30, height:30, borderRadius:"50%", background:"rgba(255,255,255,0.22)", border:"2px solid rgba(255,255,255,0.6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>{m.emoji}</div>)}
-                  </div>
-                )}
+                {next.location && <div style={{ background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>📍 {next.location}</div>}
+                {next.tripType && <div style={{ background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>{next.tripType}</div>}
+                {members.length > 0 && <div style={{ display:"flex", gap:4, marginLeft:"auto" }}>{members.map(m => <div key={m.id} style={{ width:30, height:30, borderRadius:"50%", background:"rgba(255,255,255,0.22)", border:"2px solid rgba(255,255,255,0.6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>{m.emoji}</div>)}</div>}
               </div>
             </div>
           </div>
@@ -2547,20 +2559,11 @@ function TripsPage({ trips, family }) {
                   <div style={{ position:"absolute", inset:0, backgroundImage:`url(${tripImageUrl(trip)})`, backgroundSize:"cover", backgroundPosition:"center" }} />
                   <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.72) 100%)" }} />
                   <div style={{ position:"relative", zIndex:2, padding:"10px", height:"100%", display:"flex", flexDirection:"column", justifyContent:"space-between" }}>
-                    {days !== null && days >= 0 && (
-                      <div style={{ alignSelf:"flex-end", background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:10, padding:"4px 8px", textAlign:"center" }}>
-                        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:22, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div>
-                        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:9, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:.8, textTransform:"uppercase" }}>days</div>
-                      </div>
-                    )}
+                    {days !== null && days >= 0 && <div style={{ alignSelf:"flex-end", background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:10, padding:"4px 8px", textAlign:"center" }}><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:22, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div><div style={{ fontFamily:"'Nunito',sans-serif", fontSize:9, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:.8, textTransform:"uppercase" }}>days</div></div>}
                     <div>
                       <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:17, fontWeight:700, color:"#fff", textShadow:"0 1px 6px rgba(0,0,0,0.5)" }}>{trip.destination}</div>
                       <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:"rgba(255,255,255,0.85)", marginTop:2 }}>{formatTripDates(trip.startDate, trip.endDate)}</div>
-                      {members.length > 0 && (
-                        <div style={{ display:"flex", gap:3, marginTop:6 }}>
-                          {members.map(m => <div key={m.id} style={{ width:22, height:22, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"1.5px solid rgba(255,255,255,0.6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12 }}>{m.emoji}</div>)}
-                        </div>
-                      )}
+                      {members.length > 0 && <div style={{ display:"flex", gap:3, marginTop:6 }}>{members.map(m => <div key={m.id} style={{ width:22, height:22, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"1.5px solid rgba(255,255,255,0.6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12 }}>{m.emoji}</div>)}</div>}
                     </div>
                   </div>
                 </div>
@@ -2577,7 +2580,7 @@ function TripsPage({ trips, family }) {
             const nights = tripNights(trip.startDate, trip.endDate);
             const members = (trip.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
             return (
-              <div key={trip.id} style={{ display:"flex", gap:0, background:T.white, borderRadius:16, overflow:"hidden", marginBottom:10, border:`1.5px solid ${T.border}` }}>
+              <div key={trip.id} style={{ display:"flex", background:T.white, borderRadius:16, overflow:"hidden", marginBottom:10, border:`1.5px solid ${T.border}` }}>
                 <div style={{ width:80, flexShrink:0, backgroundImage:`url(${tripImageUrl(trip)})`, backgroundSize:"cover", backgroundPosition:"center", filter:"grayscale(30%)" }} />
                 <div style={{ padding:"12px", flex:1 }}>
                   <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text }}>{trip.destination}</div>
@@ -2593,10 +2596,6 @@ function TripsPage({ trips, family }) {
   );
 }
 
-// ════════════════════════════════════════════════════════════════════════════
-// ADMIN — TRIPS
-// ════════════════════════════════════════════════════════════════════════════
-
 function AdminTrips({ family, trips, saveTrips }) {
   const EMPTY_TRIP = { destination:"", startDate:"", endDate:"", location:"", tripType:"", imageKeyword:"", photoUrl:"", memberIds:[] };
   const [form, setForm] = useState(EMPTY_TRIP);
@@ -2604,13 +2603,7 @@ function AdminTrips({ family, trips, saveTrips }) {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  function startEdit(trip) {
-    setForm({ ...EMPTY_TRIP, ...trip });
-    setEditingId(trip.id);
-    setShowForm(true);
-    window.scrollTo({ top:0, behavior:"smooth" });
-  }
-
+  function startEdit(trip) { setForm({ ...EMPTY_TRIP, ...trip }); setEditingId(trip.id); setShowForm(true); window.scrollTo({ top:0, behavior:"smooth" }); }
   function cancelForm() { setForm(EMPTY_TRIP); setEditingId(null); setShowForm(false); }
 
   async function saveTripForm() {
@@ -2635,19 +2628,15 @@ function AdminTrips({ family, trips, saveTrips }) {
   return (
     <div>
       <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>✈️ Trips</h2>
-      <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>
-        Add your family trips. Each shows on the Trips page with a photo background, countdown, and who's going.
-      </p>
+      <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>Add your family trips. Each shows on the Trips page with a photo, countdown, and who's going.</p>
 
       {showForm && (
         <div style={{ background:T.white, borderRadius:16, border:`2px solid ${editingId?"#3B6FA0":T.border}`, padding:"18px 20px", marginBottom:20 }}>
           <h3 style={{ fontSize:17, fontWeight:700, color:editingId?"#3B6FA0":T.text, margin:"0 0 16px" }}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
-
           <div style={{ marginBottom:12 }}>
             <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Destination *</label>
             <input value={form.destination} onChange={e=>setForm(f=>({...f,destination:e.target.value}))} placeholder="e.g. Outer Banks, Yellowstone" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:15, boxSizing:"border-box" }} />
           </div>
-
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Date *</label>
@@ -2669,31 +2658,23 @@ function AdminTrips({ family, trips, saveTrips }) {
               </select>
             </div>
           </div>
-
           <div style={{ marginBottom:12 }}>
             <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Photo Keyword <span style={{ fontWeight:400, color:T.muted }}>(auto-finds a background photo)</span></label>
-            <input value={form.imageKeyword} onChange={e=>setForm(f=>({...f,imageKeyword:e.target.value}))} placeholder="e.g. outer banks beach, yellowstone bison, new york city" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+            <input value={form.imageKeyword} onChange={e=>setForm(f=>({...f,imageKeyword:e.target.value}))} placeholder="e.g. outer banks beach, yellowstone bison, new york skyline" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
           </div>
-
           <div style={{ marginBottom:16 }}>
             <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Custom Photo URL <span style={{ fontWeight:400, color:T.muted }}>(optional — overrides keyword)</span></label>
             <input value={form.photoUrl} onChange={e=>setForm(f=>({...f,photoUrl:e.target.value}))} placeholder="https://your-photo-url.jpg" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:13, boxSizing:"border-box" }} />
           </div>
-
           <div style={{ marginBottom:16 }}>
             <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Who's Going?</label>
             <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
               {family.map(m => {
                 const on = (form.memberIds||[]).includes(m.id);
-                return (
-                  <button key={m.id} onClick={() => setForm(f => ({ ...f, memberIds: on ? f.memberIds.filter(id=>id!==m.id) : [...(f.memberIds||[]), m.id] }))} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${on?m.color:T.border}`, background:on?m.color:"transparent", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:on?"#fff":T.sub, transition:"all 0.15s" }}>
-                    {m.emoji} {m.name}
-                  </button>
-                );
+                return <button key={m.id} onClick={() => setForm(f => ({ ...f, memberIds: on ? f.memberIds.filter(id=>id!==m.id) : [...(f.memberIds||[]), m.id] }))} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${on?m.color:T.border}`, background:on?m.color:"transparent", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:on?"#fff":T.sub }}>{m.emoji} {m.name}</button>;
               })}
             </div>
           </div>
-
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={saveTripForm} disabled={saving} style={{ flex:1, padding:"12px", borderRadius:12, background:editingId?"#3B6FA0":T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
             <button onClick={cancelForm} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:14 }}>Cancel</button>
@@ -2701,16 +2682,9 @@ function AdminTrips({ family, trips, saveTrips }) {
         </div>
       )}
 
-      {!showForm && (
-        <button onClick={() => { setEditingId(null); setForm(EMPTY_TRIP); setShowForm(true); }} style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 20px", borderRadius:14, background:T.stone, border:`2px dashed ${T.border}`, cursor:"pointer", width:"100%", marginBottom:20, boxSizing:"border-box" }}>
-          <span style={{ fontSize:20, color:T.muted }}>+</span>
-          <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:600, color:T.sub }}>Add a trip</span>
-        </button>
-      )}
+      {!showForm && <button onClick={() => { setEditingId(null); setForm(EMPTY_TRIP); setShowForm(true); }} style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 20px", borderRadius:14, background:T.stone, border:`2px dashed ${T.border}`, cursor:"pointer", width:"100%", marginBottom:20, boxSizing:"border-box" }}><span style={{ fontSize:20, color:T.muted }}>+</span><span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:600, color:T.sub }}>Add a trip</span></button>}
 
-      {sorted.length === 0 && !showForm && (
-        <div style={{ textAlign:"center", padding:"32px", color:T.muted, fontFamily:"'Nunito',sans-serif" }}>No trips yet. Tap above to plan your first adventure!</div>
-      )}
+      {sorted.length === 0 && !showForm && <div style={{ textAlign:"center", padding:"32px", color:T.muted, fontFamily:"'Nunito',sans-serif" }}>No trips yet. Tap above to plan your first adventure!</div>}
 
       {sorted.map(trip => {
         const days = tripDaysAway(trip.startDate);
@@ -2722,16 +2696,12 @@ function AdminTrips({ family, trips, saveTrips }) {
                 <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:17, fontWeight:700, color:T.text }}>{trip.destination}</div>
                 <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted, marginTop:2 }}>{formatTripDates(trip.startDate, trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
                 {trip.location && <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.sub, marginTop:2 }}>📍 {trip.location}</div>}
-                <div style={{ display:"flex", gap:4, marginTop:6 }}>
-                  {(trip.memberIds||[]).map(id => { const m = family.find(x=>x.id===id); return m ? <span key={id} style={{ fontSize:16 }}>{m.emoji}</span> : null; })}
-                </div>
+                <div style={{ display:"flex", gap:4, marginTop:6 }}>{(trip.memberIds||[]).map(id => { const m = family.find(x=>x.id===id); return m ? <span key={id} style={{ fontSize:16 }}>{m.emoji}</span> : null; })}</div>
               </div>
               <div style={{ textAlign:"center", minWidth:44 }}>
-                {days === null ? null
-                  : days < 0  ? <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, color:T.muted }}>Past</div>
+                {days === null ? null : days < 0 ? <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, color:T.muted }}>Past</div>
                   : days === 0 ? <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, color:"#2D7A56", fontWeight:700 }}>Today!</div>
-                  : <><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:22, fontWeight:700, color:T.text, lineHeight:1 }}>{days}</div><div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, color:T.muted }}>days</div></>
-                }
+                  : <><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:22, fontWeight:700, color:T.text, lineHeight:1 }}>{days}</div><div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, color:T.muted }}>days</div></>}
               </div>
               <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
                 <button onClick={() => startEdit(trip)} style={{ padding:"6px 12px", borderRadius:8, background:"#D6E8F7", color:"#3B6FA0", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Edit</button>
