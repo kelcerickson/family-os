@@ -107,21 +107,11 @@ const SB = {
 
 // Convert DB rows to app format
 function dbEventsToApp(rows) {
-  return (rows||[]).map(r => {
-    const rawDows = r.dows || [1];
-    // Negative values encode the monthly week occurrence (e.g. -2 = 2nd occurrence)
-    const negEntry = rawDows.find(d => d < 0);
-    const monthlyWeek = negEntry ? Math.abs(negEntry) : 1;
-    const dows = rawDows.filter(d => d >= 0);
-    return {
-      id: r.id, title: r.title, memberIds: r.member_ids,
-      startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
-      dows: rawDows, // keep raw for encoding; recurrenceLabel filters internally
-      dow: dows[0] ?? 1,
-      specificDate: r.specific_date,
-      monthlyWeek,
-    };
-  });
+  return (rows||[]).map(r => ({
+    id: r.id, title: r.title, memberIds: r.member_ids,
+    startH: r.start_h, dur: r.dur, recurrence: r.recurrence,
+    dows: r.dows, specificDate: r.specific_date, dow: (r.dows||[1])[0],
+  }));
 }
 function dbTasksToApp(rows) {
   const result = {};
@@ -594,20 +584,15 @@ function CalendarPage({ family, events }) {
   }, [calScrollRef[0]]);
   function eventMatchesDate(ev, date) {
     const dow = date.getDay();
-    // Filter out negative values (monthly week encoding) before checking day match
-    const positiveDows = ev.dows ? ev.dows.filter(d => d >= 0) : null;
-    const matchesDow = positiveDows ? positiveDows.includes(dow) : ev.dow === dow;
+    // Support both old single dow and new dows array
+    const matchesDow = ev.dows ? ev.dows.includes(dow) : ev.dow === dow;
     if (ev.recurrence === "daily") return true;
     if (ev.recurrence === "weekly") return matchesDow;
     if (ev.recurrence === "monthly") {
       if (!matchesDow) return false;
-      // Decode week occurrence from negative encoding in dows, or fall back to monthlyWeek prop
       const rawNeg = ev.dows ? ev.dows.find(d => d < 0) : null;
-      const weekNum = rawNeg ? Math.abs(rawNeg) : (ev.monthlyWeek ?? 1);
-      if (weekNum === 5) {
-        const nextWeek = new Date(date); nextWeek.setDate(date.getDate() + 7);
-        return nextWeek.getMonth() !== date.getMonth();
-      }
+      const weekNum = rawNeg ? Math.abs(rawNeg) : 1;
+      if (weekNum === 5) { const nw = new Date(date); nw.setDate(date.getDate()+7); return nw.getMonth() !== date.getMonth(); }
       return Math.ceil(date.getDate() / 7) === weekNum;
     }
     if (ev.recurrence === "once" && ev.specificDate) {
@@ -1595,14 +1580,12 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   function recurrenceLabel(ev) {
     if (ev.recurrence === "once") return `Once · ${ev.specificDate}`;
     if (ev.recurrence === "daily") return "Every day";
-    // Filter out negative values (used to encode monthly week occurrence) before mapping to day names
     const positiveDows = ev.dows ? ev.dows.filter(i => i >= 0) : [];
     const days = positiveDows.length > 0
       ? positiveDows.map(i => (DOW_LABELS[i] || "").slice(0,3)).join(", ")
       : (ev.dow !== undefined ? (DOW_LABELS[ev.dow] || "") : "");
     if (ev.recurrence === "weekly") return `Every ${days}`;
     if (ev.recurrence === "monthly") {
-      // Extract the week occurrence from negative encoding
       const weekNum = ev.dows ? Math.abs(ev.dows.find(i => i < 0) || -1) : 1;
       const occLabel = ["1st","2nd","3rd","4th","Last"][weekNum-1] || "1st";
       return `Monthly · ${occLabel} ${days}`;
@@ -2511,59 +2494,80 @@ function TripsPage({ trips, family }) {
 
   return (
     <div style={{ paddingBottom:T.navH+16, background:T.bg, minHeight:"100vh" }}>
-      <div style={{ padding:"16px 16px 0" }}>
+      <div style={{ padding:"16px 16px 12px" }}>
         <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color:T.text }}>✈️ Family Trips</div>
-        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted, marginBottom:16 }}>{upcoming.length} upcoming · {past.length} completed</div>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted }}>{upcoming.length} upcoming · {past.length} completed</div>
       </div>
 
+      {/* BIG feature card — tall rectangle, image really shows */}
       {next && (() => {
         const days = tripDaysAway(next.startDate);
         const nights = tripNights(next.startDate, next.endDate);
         const members = (next.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
         return (
-          <div style={{ margin:"0 12px 14px", borderRadius:24, overflow:"hidden", position:"relative", boxShadow:"0 8px 32px rgba(0,0,0,0.18)" }}>
+          <div style={{ margin:"0 12px 16px", borderRadius:24, overflow:"hidden", position:"relative", height:320, boxShadow:"0 8px 32px rgba(0,0,0,0.2)" }}>
             <div style={{ position:"absolute", inset:0, backgroundImage:`url(${tripImageUrl(next)})`, backgroundSize:"cover", backgroundPosition:"center" }} />
-            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.82) 100%)" }} />
-            <div style={{ position:"relative", zIndex:2, padding:"20px 20px 0", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-              <div style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(6px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color:"#fff", letterSpacing:1 }}>NEXT UP</div>
+            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.85) 100%)" }} />
+            {/* Top row */}
+            <div style={{ position:"absolute", top:0, left:0, right:0, zIndex:2, padding:"16px 18px", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(6px)", borderRadius:99, padding:"5px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color:"#fff", letterSpacing:1 }}>NEXT UP</div>
               {days !== null && days >= 0 && (
-                <div style={{ textAlign:"center", background:"rgba(255,255,255,0.18)", backdropFilter:"blur(6px)", borderRadius:16, padding:"10px 16px" }}>
+                <div style={{ textAlign:"center", background:"rgba(0,0,0,0.35)", backdropFilter:"blur(8px)", borderRadius:16, padding:"10px 16px", border:"1px solid rgba(255,255,255,0.2)" }}>
                   <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:52, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div>
-                  <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:1, textTransform:"uppercase" }}>days away</div>
+                  <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.9)", letterSpacing:1.2, textTransform:"uppercase" }}>days away</div>
                 </div>
               )}
-              {days !== null && days < 0 && <div style={{ background:"#2D7A56", borderRadius:16, padding:"8px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:"#fff" }}>Happening now!</div>}
+              {days !== null && days < 0 && <div style={{ background:"#2D7A56", borderRadius:16, padding:"8px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:"#fff" }}>Happening now! 🎉</div>}
             </div>
-            <div style={{ position:"relative", zIndex:2, padding:"60px 20px 20px" }}>
-              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:34, fontWeight:700, color:"#fff", lineHeight:1.1, textShadow:"0 2px 12px rgba(0,0,0,0.4)" }}>{next.destination}</div>
-              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:15, color:"rgba(255,255,255,0.88)", marginTop:4, marginBottom:14 }}>{formatTripDates(next.startDate, next.endDate)}{nights > 0 ? ` · ${nights} night${nights!==1?"s":""}` : ""}</div>
+            {/* Bottom info */}
+            <div style={{ position:"absolute", bottom:0, left:0, right:0, zIndex:2, padding:"20px 18px" }}>
+              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:30, fontWeight:700, color:"#fff", lineHeight:1.15, textShadow:"0 2px 12px rgba(0,0,0,0.5)" }}>{next.destination}</div>
+              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:14, color:"rgba(255,255,255,0.9)", marginTop:4, marginBottom:12 }}>
+                {formatTripDates(next.startDate, next.endDate)}{nights > 0 ? ` · ${nights} night${nights!==1?"s":""}` : ""}
+              </div>
               <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-                {next.location && <div style={{ background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>📍 {next.location}</div>}
-                {next.tripType && <div style={{ background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>{next.tripType}</div>}
-                {members.length > 0 && <div style={{ display:"flex", gap:4, marginLeft:"auto" }}>{members.map(m => <div key={m.id} style={{ width:30, height:30, borderRadius:"50%", background:"rgba(255,255,255,0.22)", border:"2px solid rgba(255,255,255,0.6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>{m.emoji}</div>)}</div>}
+                {next.location  && <div style={{ background:"rgba(255,255,255,0.18)", backdropFilter:"blur(4px)", borderRadius:99, padding:"4px 11px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>📍 {next.location}</div>}
+                {next.tripType  && <div style={{ background:"rgba(255,255,255,0.18)", backdropFilter:"blur(4px)", borderRadius:99, padding:"4px 11px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>{next.tripType}</div>}
+                {members.length > 0 && (
+                  <div style={{ display:"flex", gap:4, marginLeft:"auto" }}>
+                    {members.map(m => <div key={m.id} style={{ width:28, height:28, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"2px solid rgba(255,255,255,0.65)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>{m.emoji}</div>)}
+                  </div>
+                )}
               </div>
             </div>
           </div>
         );
       })()}
 
+      {/* Smaller upcoming — 3 per row, square-ish */}
       {rest.length > 0 && (
         <div style={{ padding:"0 12px" }}>
-          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:T.sub, marginBottom:10, letterSpacing:.5 }}>COMING UP</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub, marginBottom:10, letterSpacing:.6 }}>COMING UP</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:16 }}>
             {rest.map(trip => {
               const days = tripDaysAway(trip.startDate);
               const members = (trip.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
               return (
-                <div key={trip.id} style={{ borderRadius:18, overflow:"hidden", position:"relative", minHeight:140, boxShadow:"0 4px 16px rgba(0,0,0,0.14)" }}>
+                <div key={trip.id} style={{ borderRadius:16, overflow:"hidden", position:"relative", aspectRatio:"1 / 1", boxShadow:"0 3px 12px rgba(0,0,0,0.15)" }}>
                   <div style={{ position:"absolute", inset:0, backgroundImage:`url(${tripImageUrl(trip)})`, backgroundSize:"cover", backgroundPosition:"center" }} />
-                  <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.72) 100%)" }} />
-                  <div style={{ position:"relative", zIndex:2, padding:"10px", height:"100%", display:"flex", flexDirection:"column", justifyContent:"space-between" }}>
-                    {days !== null && days >= 0 && <div style={{ alignSelf:"flex-end", background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:10, padding:"4px 8px", textAlign:"center" }}><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:22, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div><div style={{ fontFamily:"'Nunito',sans-serif", fontSize:9, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:.8, textTransform:"uppercase" }}>days</div></div>}
+                  <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.68) 100%)" }} />
+                  <div style={{ position:"absolute", inset:0, zIndex:2, padding:"8px", display:"flex", flexDirection:"column", justifyContent:"space-between" }}>
+                    {/* Countdown top-right */}
+                    {days !== null && days >= 0 && (
+                      <div style={{ alignSelf:"flex-end", background:"rgba(0,0,0,0.4)", backdropFilter:"blur(4px)", borderRadius:10, padding:"3px 7px", textAlign:"center", border:"1px solid rgba(255,255,255,0.15)" }}>
+                        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div>
+                        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:8, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:.8, textTransform:"uppercase" }}>days</div>
+                      </div>
+                    )}
+                    {/* Info bottom */}
                     <div>
-                      <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:17, fontWeight:700, color:"#fff", textShadow:"0 1px 6px rgba(0,0,0,0.5)" }}>{trip.destination}</div>
-                      <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:"rgba(255,255,255,0.85)", marginTop:2 }}>{formatTripDates(trip.startDate, trip.endDate)}</div>
-                      {members.length > 0 && <div style={{ display:"flex", gap:3, marginTop:6 }}>{members.map(m => <div key={m.id} style={{ width:22, height:22, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"1.5px solid rgba(255,255,255,0.6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12 }}>{m.emoji}</div>)}</div>}
+                      <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:"#fff", lineHeight:1.2, textShadow:"0 1px 6px rgba(0,0,0,0.6)" }}>{trip.destination}</div>
+                      <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, color:"rgba(255,255,255,0.85)", marginTop:2 }}>{formatTripDates(trip.startDate, trip.endDate)}</div>
+                      {members.length > 0 && (
+                        <div style={{ display:"flex", gap:2, marginTop:5 }}>
+                          {members.map(m => <div key={m.id} style={{ width:18, height:18, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"1.5px solid rgba(255,255,255,0.65)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10 }}>{m.emoji}</div>)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2573,19 +2577,20 @@ function TripsPage({ trips, family }) {
         </div>
       )}
 
+      {/* Past trips */}
       {past.length > 0 && (
         <div style={{ padding:"0 12px" }}>
-          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:T.muted, marginBottom:10, letterSpacing:.5 }}>MEMORIES</div>
+          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.muted, marginBottom:10, letterSpacing:.6 }}>MEMORIES</div>
           {[...past].reverse().map(trip => {
             const nights = tripNights(trip.startDate, trip.endDate);
             const members = (trip.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
             return (
-              <div key={trip.id} style={{ display:"flex", background:T.white, borderRadius:16, overflow:"hidden", marginBottom:10, border:`1.5px solid ${T.border}` }}>
-                <div style={{ width:80, flexShrink:0, backgroundImage:`url(${tripImageUrl(trip)})`, backgroundSize:"cover", backgroundPosition:"center", filter:"grayscale(30%)" }} />
-                <div style={{ padding:"12px", flex:1 }}>
-                  <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text }}>{trip.destination}</div>
-                  <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted }}>{formatTripDates(trip.startDate, trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
-                  {members.length > 0 && <div style={{ display:"flex", gap:3, marginTop:6 }}>{members.map(m => <span key={m.id} style={{ fontSize:16 }}>{m.emoji}</span>)}</div>}
+              <div key={trip.id} style={{ display:"flex", background:T.white, borderRadius:14, overflow:"hidden", marginBottom:8, border:`1.5px solid ${T.border}` }}>
+                <div style={{ width:72, flexShrink:0, backgroundImage:`url(${tripImageUrl(trip)})`, backgroundSize:"cover", backgroundPosition:"center", filter:"grayscale(35%)" }} />
+                <div style={{ padding:"10px 12px", flex:1 }}>
+                  <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, color:T.text }}>{trip.destination}</div>
+                  <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>{formatTripDates(trip.startDate, trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
+                  {members.length > 0 && <div style={{ display:"flex", gap:3, marginTop:5 }}>{members.map(m => <span key={m.id} style={{ fontSize:14 }}>{m.emoji}</span>)}</div>}
                 </div>
               </div>
             );
@@ -2683,7 +2688,6 @@ function AdminTrips({ family, trips, saveTrips }) {
       )}
 
       {!showForm && <button onClick={() => { setEditingId(null); setForm(EMPTY_TRIP); setShowForm(true); }} style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 20px", borderRadius:14, background:T.stone, border:`2px dashed ${T.border}`, cursor:"pointer", width:"100%", marginBottom:20, boxSizing:"border-box" }}><span style={{ fontSize:20, color:T.muted }}>+</span><span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:600, color:T.sub }}>Add a trip</span></button>}
-
       {sorted.length === 0 && !showForm && <div style={{ textAlign:"center", padding:"32px", color:T.muted, fontFamily:"'Nunito',sans-serif" }}>No trips yet. Tap above to plan your first adventure!</div>}
 
       {sorted.map(trip => {
