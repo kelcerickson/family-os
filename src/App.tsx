@@ -278,9 +278,14 @@ const ANNUAL_CHORES = [
 const INIT_CHORE_ASSIGNMENTS = {};
 
 // Helper: get chores for a specific date
-function getChoresForDate(date, choreAssignments, customChores) {
-  const dow = date.getDay();
-  const cc = customChores || {};
+function getChoresForDate(date, choreAssignments) {
+  const dow = date.getDay(); // 0=Sun
+  const day = date.getDate();
+  const month = date.getMonth();
+
+  // Load custom chores from localStorage
+  let customChores = {};
+  try { customChores = JSON.parse(localStorage.getItem("familyos_customChores") || "{}"); } catch {}
 
   // Is it the 1st Thursday of the month?
   function isFirstThursday(d) {
@@ -304,32 +309,42 @@ function getChoresForDate(date, choreAssignments, customChores) {
   // Always add daily-all chores
   DAILY_CHORES_ALL.forEach(c => allChores.push({ label:c, assignedTo:"all" }));
 
-  // Resolve a chore list applying renames and hidden entries from customChores
-  const renames = cc._renames || {};
-  const hidden  = new Set(cc._hidden  || []);
-  function resolveList(base, key) {
-    const custom = cc[key] || [];
-    const renamedOrig = Object.keys(renames).filter(k => k.startsWith(key+"|")).map(k => k.slice((key+"|").length));
-    const resolved = base
-      .filter(c => !renamedOrig.includes(c) && !hidden.has(key+"|"+c))
-      .concat(renamedOrig.filter(c => !hidden.has(key+"|"+c)).map(c => renames[key+"|"+c]));
-    const seen = new Set(resolved);
-    return [...resolved, ...custom.filter(c => !hidden.has(key+"|"+c) && !seen.has(c))];
+  // Add weekly chores for this day (base + custom)
+  const weeklyBase = WEEKLY_CHORES[dow] || [];
+  const weeklyCustom = customChores[`weekly_${dow}`] || [];
+  [...weeklyBase, ...weeklyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+
+  // Add daily-individual chores (base + custom)
+  const dailyCustom = customChores["daily_ind"] || [];
+  [...DAILY_CHORES_INDIVIDUAL, ...dailyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+
+  // Monthly (base + custom)
+  if (isFirstThursday(date)) {
+    const monthlyCustom = customChores["monthly"] || [];
+    [...MONTHLY_CHORES, ...monthlyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly" }));
   }
 
-  resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
-  resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
-  if (isFirstThursday(date))           resolveList(MONTHLY_CHORES,     "monthly"    ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly"     }));
-  if (isFirstThursdayOfQuarter(date))  resolveList(QUARTERLY_CHORES,   "quarterly"  ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly"   }));
-  if (isFirstThursdayOfSemiAnnual(date)) resolveList(SEMI_ANNUAL_CHORES, "semi_annual").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
-  if (isFirstThursdayOfYear(date))     resolveList(ANNUAL_CHORES,      "annual"     ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"annual"      }));
+  // Quarterly
+  if (isFirstThursdayOfQuarter(date)) {
+    QUARTERLY_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly" }));
+  }
+
+  // Semi-annual
+  if (isFirstThursdayOfSemiAnnual(date)) {
+    SEMI_ANNUAL_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
+  }
+
+  // Annual
+  if (isFirstThursdayOfYear(date)) {
+    ANNUAL_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"annual" }));
+  }
 
   return allChores;
 }
 
 // Build contribute tasks for each member on a given date
-function getContributeTasksForMember(memberId, date, choreAssignments, customChores) {
-  const allChores = getChoresForDate(date, choreAssignments, customChores);
+function getContributeTasksForMember(memberId, date, choreAssignments) {
+  const allChores = getChoresForDate(date, choreAssignments);
   return allChores
     .filter(c => c.assignedTo === "all" || (Array.isArray(c.assignedTo) && c.assignedTo.includes(memberId)))
     .map((c, i) => ({ id: i+1, label: c.label, done: false, freq: c.freq || "daily" }));
@@ -526,9 +541,10 @@ function TopBar({ onAdmin }) {
 // ── Bottom Nav ────────────────────────────────────────────────────────────────
 function BottomNav({ page, onPage }) {
   const tabs = [
-    { id:"calendar", label:"Calendar", icon:"📅" },
-    { id:"today",    label:"Today",    icon:"⚡" },
-    { id:"progress", label:"Progress", icon:"🌈" },
+    { id:"trips",    label:"Trips",     icon:"✈️" },
+    { id:"calendar", label:"This Week", icon:"📅" },
+    { id:"today",    label:"Today",     icon:"⚡" },
+    { id:"progress", label:"Progress",  icon:"🌈" },
   ];
   return (
     <nav style={{ position:"fixed", bottom:0, left:0, right:0, width:"100vw", zIndex:200, background:T.white, borderTop:`2px solid ${T.border}`, display:"flex", height:T.navH, boxSizing:"border-box" }}>
@@ -815,7 +831,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
   );
 }
 
-function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, customChores }) {
+function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
   // Task completions loaded from Supabase per day (moved after viewDate)
@@ -910,7 +926,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, cus
         <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", width:"100vw", alignItems:"stretch" }}>
           {activeMembers.map(m => {
             // Merge stored tasks with auto-generated chore tasks for today
-            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments, customChores);
+            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments);
             // Use tasks from Supabase, filtered by recurrence for viewDate
             const dbMemberTasks = dbTasks[m.id] || { learn:[], exercise:[], contribute:[], goals:[] };
             function filterByDate(taskList) {
@@ -1426,7 +1442,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
 // ════════════════════════════════════════════════════════════════════════════
 // ADMIN PAGE
 // ════════════════════════════════════════════════════════════════════════════
-function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, customChores, saveCustomChores, dbTaskRows, dbGoalRows, onReload, screensaverMsg, setScreensaverMsg }) {
+function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, trips, saveTrips, dbTaskRows, dbGoalRows, onReload, screensaverMsg, setScreensaverMsg }) {
   const [tab, setTab] = useState("calendar");
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
 
@@ -1439,7 +1455,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
             <h1 style={{ fontSize:26, fontWeight:700, color:T.white, margin:0 }}>Admin Setup</h1>
             <div style={{ fontSize:13, color:"rgba(255,255,255,0.5)", marginTop:2 }}>
               Family OS · <a href="#" onClick={e=>{e.preventDefault();window.location.hash="";}} style={{color:"#FFD93D",textDecoration:"none"}}>← Back to Kiosk</a>
-              <span style={{ marginLeft:12, color:"#6BCB77" }}>✅ Synced across all devices</span>
+              <span style={{ marginLeft:12, color:"#6BCB77" }}>✅ Auto-saving to this device</span>
             </div>
           </div>
           <button onClick={() => {
@@ -1457,13 +1473,13 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
           </button>
         </div>
         <div style={{ display:"flex", gap:2 }}>
-          {[{id:"calendar",label:"📅 Calendar"},{id:"chores",label:"🧹 Chores"},{id:"tasks",label:"⚡ Tasks"},{id:"goals",label:"🎯 Goals"}].map(t => (
+          {[{id:"calendar",label:"📅 Calendar"},{id:"chores",label:"🧹 Chores"},{id:"tasks",label:"⚡ Tasks"},{id:"goals",label:"🎯 Goals"},{id:"trips",label:"✈️ Trips"}].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{ padding:"10px 18px", borderRadius:"10px 10px 0 0", border:"none", cursor:"pointer", background: tab===t.id?"#F0EEE9":"transparent", color: tab===t.id?T.text:"rgba(255,255,255,0.6)", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600 }}>{t.label}</button>
           ))}
         </div>
       </div>
 
-      <div style={{ padding:"20px 16px 120px", maxWidth:900, margin:"0 auto" }}>
+      <div style={{ padding:"24px 24px 100px", maxWidth:900, margin:"0 auto", overflowY:"scroll", minHeight:"calc(100vh - 140px)", WebkitOverflowScrolling:"touch", touchAction:"pan-y" }}>
 
         {/* Screensaver Message */}
         <div style={{ background:T.white, borderRadius:16, border:`2px solid ${T.border}`, padding:"18px 20px", marginBottom:24 }}>
@@ -1513,9 +1529,10 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
         </div>
 
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
-        {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} customChores={customChores} saveCustomChores={saveCustomChores} />}
+        {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
         {tab==="goals"    && <AdminGoals    family={family} goals={goals}   setGoals={setGoals} />}
+        {tab==="trips"    && <AdminTrips    family={family} trips={trips}   saveTrips={saveTrips} />}
       </div>
     </div>
   );
@@ -1843,32 +1860,34 @@ const FREQ_GROUPS = [
   { id:"annual",      label:"Annual",              color:"#2D7A56", chores: ANNUAL_CHORES,          desc:"Appears on the 1st Thursday of January" },
 ];
 
-function AdminChores({ family, choreAssignments, setChoreAssignments, customChores, saveCustomChores }) {
+function AdminChores({ family, choreAssignments, setChoreAssignments }) {
   const choreAssignmentsRef = { current: choreAssignments };
-  choreAssignmentsRef.current = choreAssignments;
+  choreAssignmentsRef.current = choreAssignments; // always current
   const [activeFreq, setActiveFreq] = useState("daily_ind");
   const [activeDow, setActiveDow] = useState(1);
-  const [editingChore, setEditingChore] = useState(null);
+  const [editingChore, setEditingChore] = useState(null); // { oldLabel, newLabel, freq, dow }
   const [addingChore, setAddingChore] = useState(false);
   const [newChoreName, setNewChoreName] = useState("");
 
-  // customChores + saveCustomChores come from AppInner (Supabase-backed, syncs all devices)
+  // Custom chores added by user (stored in localStorage)
+  const [customChores, setCustomChores] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("familyos_customChores") || "{}"); }
+    catch { return {}; }
+  });
 
+  function saveCustomChores(next) {
+    setCustomChores(next);
+    try { localStorage.setItem("familyos_customChores", JSON.stringify(next)); } catch {}
+  }
+
+  // Get chores for a given freq/dow, including custom ones
   function getChorelist(freqId, dow) {
     const base = freqId === "weekly"
       ? (WEEKLY_CHORES[dow] || [])
       : (FREQ_GROUPS.find(f => f.id === freqId)?.chores || []);
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const cc = customChores || {};
-    const custom = cc[key] || [];
-    const renames = cc._renames || {};
-    const hidden  = new Set(cc._hidden || []);
-    const renamedOrig = Object.keys(renames).filter(k => k.startsWith(key+"|")).map(k => k.slice((key+"|").length));
-    const resolved = base
-      .filter(c => !renamedOrig.includes(c) && !hidden.has(key+"|"+c))
-      .concat(renamedOrig.filter(c => !hidden.has(key+"|"+c)).map(c => renames[key+"|"+c]));
-    const seen = new Set(resolved);
-    return [...resolved, ...custom.filter(c => !hidden.has(key+"|"+c) && !seen.has(c))];
+    const custom = customChores[key] || [];
+    return [...base, ...custom];
   }
 
   function addCustomChore() {
@@ -1881,54 +1900,41 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
   }
 
   function renameChore(oldLabel, newLabel, freqId, dow) {
-    const trimmed = newLabel.trim();
-    if (!trimmed || trimmed === oldLabel) { setEditingChore(null); return; }
-    const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const cc = customChores || {};
-    const custom = cc[key] || [];
-    const base = freqId === "weekly" ? (WEEKLY_CHORES[dow]||[]) : (FREQ_GROUPS.find(f=>f.id===freqId)?.chores||[]);
-    const existingIdx = custom.indexOf(oldLabel);
-    let next = { ...cc };
-    if (existingIdx >= 0) {
-      // Custom chore — rename in list
-      next = { ...next, [key]: custom.map((c,i) => i===existingIdx ? trimmed : c) };
-    } else {
-      // Built-in chore — store rename in _renames, scrub duplicate from custom
-      const renames = cc._renames || {};
-      next = { ...next, _renames: { ...renames, [key+"|"+oldLabel]: trimmed } };
-      if (custom.includes(trimmed)) next = { ...next, [key]: custom.filter(c => c !== trimmed) };
-    }
+    if (!newLabel.trim() || newLabel === oldLabel) { setEditingChore(null); return; }
+    // Rename in assignments
     setChoreAssignments(prev => {
-      const updated = { ...prev };
-      if (updated[oldLabel] !== undefined) {
-        updated[trimmed] = updated[oldLabel];
-        delete updated[oldLabel];
-        SB.upsertChore(trimmed, updated[trimmed]);
+      const next = { ...prev };
+      if (next[oldLabel] !== undefined) {
+        next[newLabel] = next[oldLabel];
+        delete next[oldLabel];
+        SB.upsertChore(newLabel, next[newLabel]);
       }
-      return updated;
+      return next;
     });
-    saveCustomChores(next);
+    // Rename in custom chores
+    const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
+    const custom = customChores[key] || [];
+    const idx = custom.indexOf(oldLabel);
+    if (idx >= 0) {
+      const next = { ...customChores, [key]: custom.map((c,i) => i===idx ? newLabel.trim() : c) };
+      saveCustomChores(next);
+    }
     setEditingChore(null);
   }
 
   function deleteChore(label, freqId, dow) {
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const cc = customChores || {};
-    const custom = cc[key] || [];
-    const renames = cc._renames || {};
-    const renameEntry = Object.entries(renames).find(([k,v]) => k.startsWith(key+"|") && v===label);
-    const base = freqId === "weekly" ? (WEEKLY_CHORES[dow]||[]) : (FREQ_GROUPS.find(f=>f.id===freqId)?.chores||[]);
-    let next = { ...cc };
-    if (custom.includes(label)) next = { ...next, [key]: custom.filter(c => c !== label) };
-    if (renameEntry) {
-      const nr = { ...renames }; delete nr[renameEntry[0]];
-      const origLabel = renameEntry[0].slice((key+"|").length);
-      next = { ...next, _renames: nr, _hidden: [...(cc._hidden||[]), key+"|"+origLabel] };
-    } else if (base.includes(label)) {
-      next = { ...next, _hidden: [...(cc._hidden||[]), key+"|"+label] };
+    const custom = customChores[key] || [];
+    if (custom.includes(label)) {
+      const next = { ...customChores, [key]: custom.filter(c => c !== label) };
+      saveCustomChores(next);
     }
-    saveCustomChores(next);
-    setChoreAssignments(prev => { const u={...prev}; delete u[label]; SB.upsertChore(label,[]); return u; });
+    // Remove from assignments
+    setChoreAssignments(prev => {
+      const next = { ...prev };
+      delete next[label];
+      return next;
+    });
   }
 
   async function toggleAssignment(chore, memberId) {
@@ -2033,18 +2039,17 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
                   {isEditing ? (
                     <input
                       autoFocus
-                      value={editingChore.newLabel ?? chore}
-                      onChange={e => setEditingChore(ec => ({ ...ec, newLabel: e.target.value }))}
-                      onBlur={() => renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow)}
+                      defaultValue={chore}
+                      onBlur={e => renameChore(chore, e.target.value, activeFreq, activeDow)}
                       onKeyDown={e => {
-                        if (e.key === "Enter") renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow);
+                        if (e.key === "Enter") renameChore(chore, e.target.value, activeFreq, activeDow);
                         if (e.key === "Escape") setEditingChore(null);
                       }}
                       style={{ width:"100%", padding:"4px 8px", borderRadius:8, border:`2px solid ${freq.color}`, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, boxSizing:"border-box" }}
                     />
                   ) : (
                     <div
-                      onClick={() => setEditingChore({ oldLabel: chore, newLabel: chore })}
+                      onClick={() => setEditingChore({ oldLabel: chore })}
                       style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text, cursor:"pointer", padding:"4px 0", display:"flex", alignItems:"center", gap:6 }}
                     >
                       {chore}
@@ -2071,9 +2076,11 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
                   );
                 })}
 
-                {/* Actions: delete any chore */}
+                {/* Actions: delete (custom only) */}
                 <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
-                  <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
+                  {isCustom && (
+                    <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
+                  )}
                 </div>
               </div>
             );
@@ -2429,6 +2436,342 @@ function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
 }
 
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// TRIPS PAGE
+// ════════════════════════════════════════════════════════════════════════════
+
+function tripDaysAway(dateStr) {
+  if (!dateStr) return null;
+  const today = getMountainToday();
+  const trip = new Date(dateStr + "T00:00:00");
+  const diff = Math.ceil((trip - today) / (1000 * 60 * 60 * 24));
+  return diff;
+}
+
+function tripImageUrl(trip) {
+  if (trip.photoUrl) return trip.photoUrl;
+  const kw = encodeURIComponent(trip.imageKeyword || trip.destination || "travel landscape");
+  // Use a stable Unsplash collection query — keywords give consistent beautiful results
+  return `https://source.unsplash.com/featured/800x600?${kw}`;
+}
+
+function formatTripDates(startDate, endDate) {
+  if (!startDate) return "";
+  const opts = { month:"short", day:"numeric" };
+  const start = new Date(startDate + "T00:00:00").toLocaleDateString("en-US", opts);
+  if (!endDate) return start;
+  const end   = new Date(endDate   + "T00:00:00").toLocaleDateString("en-US", opts);
+  return `${start} – ${end}`;
+}
+
+function tripNights(startDate, endDate) {
+  if (!startDate || !endDate) return 0;
+  const s = new Date(startDate + "T00:00:00");
+  const e = new Date(endDate   + "T00:00:00");
+  return Math.round((e - s) / (1000 * 60 * 60 * 24));
+}
+
+function TripsPage({ trips, family }) {
+  const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
+  const today = getMountainToday();
+
+  // Sort trips by start date; split into upcoming vs past
+  const sorted = [...(trips||[])].sort((a,b) => (a.startDate||"").localeCompare(b.startDate||""));
+  const upcoming = sorted.filter(t => !t.startDate || new Date(t.startDate+"T00:00:00") >= today);
+  const past     = sorted.filter(t => t.startDate  && new Date(t.startDate+"T00:00:00")  < today);
+
+  const [expanded, setExpanded] = useState(null);
+
+  if (sorted.length === 0) {
+    return (
+      <div style={{ padding:"80px 24px", textAlign:"center", fontFamily:"'Fredoka',sans-serif" }}>
+        <div style={{ fontSize:64, marginBottom:16 }}>✈️</div>
+        <div style={{ fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>No trips yet!</div>
+        <div style={{ fontSize:15, color:T.muted }}>Go to Admin → Trips to add your first adventure.</div>
+      </div>
+    );
+  }
+
+  const [next, ...rest] = upcoming;
+
+  return (
+    <div style={{ paddingBottom:T.navH+16, background:T.bg, minHeight:"100vh" }}>
+      {/* Header */}
+      <div style={{ padding:"16px 16px 0" }}>
+        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color:T.text }}>✈️ Family Trips</div>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted, marginBottom:16 }}>
+          {upcoming.length} upcoming · {past.length} completed
+        </div>
+      </div>
+
+      {/* BIG next-trip card */}
+      {next && (() => {
+        const days = tripDaysAway(next.startDate);
+        const nights = tripNights(next.startDate, next.endDate);
+        const imgUrl = tripImageUrl(next);
+        const members = (next.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
+        return (
+          <div style={{ margin:"0 12px 14px", borderRadius:24, overflow:"hidden", position:"relative", boxShadow:"0 8px 32px rgba(0,0,0,0.18)" }}>
+            {/* Background image */}
+            <div style={{ position:"absolute", inset:0, backgroundImage:`url(${imgUrl})`, backgroundSize:"cover", backgroundPosition:"center" }} />
+            {/* Dark gradient overlay */}
+            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.82) 100%)" }} />
+            {/* NEXT UP badge */}
+            <div style={{ position:"relative", zIndex:2, padding:"20px 20px 0", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+              <div style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(6px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color:"#fff", letterSpacing:1 }}>NEXT UP</div>
+              {days !== null && days >= 0 && (
+                <div style={{ textAlign:"center", background:"rgba(255,255,255,0.18)", backdropFilter:"blur(6px)", borderRadius:16, padding:"10px 16px" }}>
+                  <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:52, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div>
+                  <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:1, textTransform:"uppercase" }}>days away</div>
+                </div>
+              )}
+              {days !== null && days < 0 && (
+                <div style={{ background:"#2D7A56", borderRadius:16, padding:"8px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:"#fff" }}>Happening now!</div>
+              )}
+            </div>
+            {/* Trip info */}
+            <div style={{ position:"relative", zIndex:2, padding:"60px 20px 20px" }}>
+              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:34, fontWeight:700, color:"#fff", lineHeight:1.1, textShadow:"0 2px 12px rgba(0,0,0,0.4)" }}>{next.destination}</div>
+              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:15, color:"rgba(255,255,255,0.88)", marginTop:4, marginBottom:14 }}>{formatTripDates(next.startDate, next.endDate)}{nights > 0 ? ` · ${nights} night${nights!==1?"s":""}` : ""}</div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+                {next.location && <div style={{ background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>📍 {next.location}</div>}
+                {next.tripType && <div style={{ background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:99, padding:"5px 12px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>{next.tripType}</div>}
+                {members.length > 0 && (
+                  <div style={{ display:"flex", gap:4, marginLeft:"auto" }}>
+                    {members.map(m => <div key={m.id} style={{ width:30, height:30, borderRadius:"50%", background:"rgba(255,255,255,0.22)", border:"2px solid rgba(255,255,255,0.6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>{m.emoji}</div>)}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Smaller upcoming trips */}
+      {rest.length > 0 && (
+        <div style={{ padding:"0 12px" }}>
+          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.sub, marginBottom:10, letterSpacing:.3 }}>COMING UP</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+            {rest.map(trip => {
+              const days = tripDaysAway(trip.startDate);
+              const imgUrl = tripImageUrl(trip);
+              const members = (trip.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
+              return (
+                <div key={trip.id} style={{ borderRadius:18, overflow:"hidden", position:"relative", minHeight:140, boxShadow:"0 4px 16px rgba(0,0,0,0.14)" }}>
+                  <div style={{ position:"absolute", inset:0, backgroundImage:`url(${imgUrl})`, backgroundSize:"cover", backgroundPosition:"center" }} />
+                  <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.72) 100%)" }} />
+                  <div style={{ position:"relative", zIndex:2, padding:"10px 10px 10px", height:"100%", display:"flex", flexDirection:"column", justifyContent:"space-between" }}>
+                    {days !== null && days >= 0 && (
+                      <div style={{ alignSelf:"flex-end", background:"rgba(255,255,255,0.2)", backdropFilter:"blur(4px)", borderRadius:10, padding:"4px 8px", textAlign:"center" }}>
+                        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:22, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div>
+                        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:9, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:.8, textTransform:"uppercase" }}>days</div>
+                      </div>
+                    )}
+                    <div>
+                      <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:17, fontWeight:700, color:"#fff", lineHeight:1.1, textShadow:"0 1px 6px rgba(0,0,0,0.5)" }}>{trip.destination}</div>
+                      <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:"rgba(255,255,255,0.85)", marginTop:2 }}>{formatTripDates(trip.startDate, trip.endDate)}</div>
+                      {members.length > 0 && (
+                        <div style={{ display:"flex", gap:3, marginTop:6 }}>
+                          {members.map(m => <div key={m.id} style={{ width:22, height:22, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"1.5px solid rgba(255,255,255,0.6)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12 }}>{m.emoji}</div>)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Past trips */}
+      {past.length > 0 && (
+        <div style={{ padding:"0 12px" }}>
+          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.muted, marginBottom:10, letterSpacing:.3 }}>MEMORIES</div>
+          {past.reverse().map(trip => {
+            const nights = tripNights(trip.startDate, trip.endDate);
+            const imgUrl = tripImageUrl(trip);
+            const members = (trip.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
+            return (
+              <div key={trip.id} style={{ display:"flex", gap:12, background:T.white, borderRadius:16, overflow:"hidden", marginBottom:10, border:`1.5px solid ${T.border}` }}>
+                <div style={{ width:80, flexShrink:0, backgroundImage:`url(${imgUrl})`, backgroundSize:"cover", backgroundPosition:"center", filter:"grayscale(30%)" }} />
+                <div style={{ padding:"12px 12px 12px 0", flex:1 }}>
+                  <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text }}>{trip.destination}</div>
+                  <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted }}>{formatTripDates(trip.startDate, trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
+                  {members.length > 0 && <div style={{ display:"flex", gap:3, marginTop:6 }}>{members.map(m => <span key={m.id} style={{ fontSize:16 }}>{m.emoji}</span>)}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ADMIN — TRIPS
+// ════════════════════════════════════════════════════════════════════════════
+
+function AdminTrips({ family, trips, saveTrips }) {
+  const EMPTY_TRIP = { destination:"", startDate:"", endDate:"", location:"", tripType:"", imageKeyword:"", photoUrl:"", memberIds:[] };
+  const [form, setForm] = useState(EMPTY_TRIP);
+  const [editingId, setEditingId] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  function startEdit(trip) {
+    setForm({ ...EMPTY_TRIP, ...trip });
+    setEditingId(trip.id);
+    setShowForm(true);
+    window.scrollTo({ top:0, behavior:"smooth" });
+  }
+
+  function cancelForm() {
+    setForm(EMPTY_TRIP);
+    setEditingId(null);
+    setShowForm(false);
+  }
+
+  async function saveTrip() {
+    if (!form.destination || !form.startDate) { alert("Please enter a destination and start date."); return; }
+    setSaving(true);
+    let next;
+    if (editingId) {
+      next = (trips||[]).map(t => t.id === editingId ? { ...form, id:editingId } : t);
+    } else {
+      const newTrip = { ...form, id: Date.now().toString() };
+      next = [...(trips||[]), newTrip];
+    }
+    await saveTrips(next);
+    setSaving(false);
+    cancelForm();
+  }
+
+  async function deleteTrip(id) {
+    if (!window.confirm("Remove this trip?")) return;
+    const next = (trips||[]).filter(t => t.id !== id);
+    await saveTrips(next);
+  }
+
+  const TYPE_OPTIONS = ["🏖️ Beach","🏔️ Mountains","🏙️ City","🎿 Ski","🌲 National Park","🚢 Cruise","🌍 International","🎡 Theme Park","🏕️ Camping","👨‍👩‍👧‍👦 Family Visit","other"];
+  const sorted = [...(trips||[])].sort((a,b) => (a.startDate||"").localeCompare(b.startDate||""));
+
+  return (
+    <div>
+      <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>✈️ Trips</h2>
+      <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>Add your family's planned trips. Each trip shows on the Trips page with a photo, countdown, and who's going.</p>
+
+      {/* Form */}
+      {showForm && (
+        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${editingId?"#3B6FA0":T.border}`, padding:"18px 20px", marginBottom:20 }}>
+          <h3 style={{ fontSize:17, fontWeight:700, color:editingId?"#3B6FA0":T.text, margin:"0 0 16px" }}>{editingId ? "✏️ Edit Trip" : "✈️ New Trip"}</h3>
+
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+            <div style={{ gridColumn:"1/-1" }}>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Destination *</label>
+              <input value={form.destination} onChange={e=>setForm(f=>({...f,destination:e.target.value}))} placeholder="e.g. Outer Banks, Yellowstone" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:15, boxSizing:"border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Date *</label>
+              <input type="date" value={form.startDate} onChange={e=>setForm(f=>({...f,startDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>End Date</label>
+              <input type="date" value={form.endDate} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Location / State</label>
+              <input value={form.location} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="e.g. North Carolina" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Trip Type</label>
+              <select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box", background:T.white }}>
+                <option value="">Select type…</option>
+                {TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Photo Keyword <span style={{ fontWeight:400, color:T.muted }}>(used to find a background photo automatically)</span></label>
+            <input value={form.imageKeyword} onChange={e=>setForm(f=>({...f,imageKeyword:e.target.value}))} placeholder="e.g. outer banks beach, yellowstone bison, new york city" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
+          </div>
+
+          <div style={{ marginBottom:16 }}>
+            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Custom Photo URL <span style={{ fontWeight:400, color:T.muted }}>(optional — overrides keyword search)</span></label>
+            <input value={form.photoUrl} onChange={e=>setForm(f=>({...f,photoUrl:e.target.value}))} placeholder="https://your-photo-url.jpg" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:13, boxSizing:"border-box" }} />
+          </div>
+
+          <div style={{ marginBottom:16 }}>
+            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Who's Going?</label>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+              {family.map(m => {
+                const on = (form.memberIds||[]).includes(m.id);
+                return (
+                  <button key={m.id} onClick={() => setForm(f => ({ ...f, memberIds: on ? f.memberIds.filter(id=>id!==m.id) : [...(f.memberIds||[]), m.id] }))} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${on?m.color:T.border}`, background:on?m.color:"transparent", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:on?"#fff":T.sub, transition:"all 0.15s" }}>
+                    {m.emoji} {m.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ display:"flex", gap:10 }}>
+            <button onClick={saveTrip} disabled={saving} style={{ flex:1, padding:"12px", borderRadius:12, background:editingId?"#3B6FA0":T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
+            <button onClick={cancelForm} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:14 }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Add button */}
+      {!showForm && (
+        <button onClick={() => { setEditingId(null); setForm(EMPTY_TRIP); setShowForm(true); }} style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 20px", borderRadius:14, background:T.stone, border:`2px dashed ${T.border}`, cursor:"pointer", width:"100%", marginBottom:20 }}>
+          <span style={{ fontSize:20, color:T.muted }}>+</span>
+          <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:600, color:T.sub }}>Add a trip</span>
+        </button>
+      )}
+
+      {/* Trip list */}
+      {sorted.length === 0 && !showForm && (
+        <div style={{ textAlign:"center", padding:"32px", color:T.muted, fontFamily:"'Nunito',sans-serif" }}>No trips added yet. Tap above to plan your first adventure!</div>
+      )}
+
+      {sorted.map(trip => {
+        const days = tripDaysAway(trip.startDate);
+        const nights = tripNights(trip.startDate, trip.endDate);
+        const isPast = days !== null && days < 0;
+        return (
+          <div key={trip.id} style={{ background:T.white, borderRadius:16, border:`1.5px solid ${T.border}`, marginBottom:10, overflow:"hidden" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px" }}>
+              <div style={{ flex:1 }}>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:17, fontWeight:700, color:T.text }}>{trip.destination}</div>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted, marginTop:2 }}>{formatTripDates(trip.startDate, trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
+                {trip.location && <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.sub, marginTop:2 }}>📍 {trip.location}</div>}
+                <div style={{ display:"flex", gap:4, marginTop:6 }}>
+                  {(trip.memberIds||[]).map(id => { const m = family.find(x=>x.id===id); return m ? <span key={id} style={{ fontSize:16 }}>{m.emoji}</span> : null; })}
+                </div>
+              </div>
+              <div style={{ textAlign:"center", marginRight:4 }}>
+                {isPast ? <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, color:T.muted }}>Past</div>
+                  : days === 0 ? <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, color:"#2D7A56", fontWeight:700 }}>Today!</div>
+                  : <><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:22, fontWeight:700, color:T.text, lineHeight:1 }}>{days}</div>
+                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, color:T.muted }}>days</div></>
+                }
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                <button onClick={() => startEdit(trip)} style={{ padding:"6px 12px", borderRadius:8, background:"#D6E8F7", color:"#3B6FA0", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Edit</button>
+                <button onClick={() => deleteTrip(trip.id)} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Root App ──────────────────────────────────────────────────────────────────
 function AppInner() {
   const [page, setPage]   = useState("today");
@@ -2439,7 +2782,7 @@ function AppInner() {
 
   const [events,           setEvents]           = useState([]);
   const [choreAssignments, setChoreAssignments] = useState({});
-  const [customChores,     setCustomChores]     = useState({});
+  const [trips,            setTrips]            = useState([]);
   const [tasks,            setTasks]            = useState(INIT_TASKS);
   const [goals,            setGoals]            = useState(INIT_GOALS);
   const [streaks,          setStreaks]           = useState(INIT_STREAKS);
@@ -2500,26 +2843,10 @@ function AppInner() {
           if (local) setScreensaverMsg(local);
         } catch {}
       }
-      // Load custom chores from Supabase so all devices stay in sync
-      const choreSettingRows = await SB.getSetting("custom_chores").catch(() => []);
-      if (choreSettingRows && choreSettingRows[0] && choreSettingRows[0].value) {
-        try {
-          const parsed = JSON.parse(choreSettingRows[0].value);
-          setCustomChores(parsed);
-          console.log("✅ custom_chores loaded from Supabase:", Object.keys(parsed));
-        } catch(e) { console.warn("custom_chores parse error:", e); }
-      } else {
-        // One-time migration: read localStorage → upload to Supabase
-        try {
-          const local = localStorage.getItem("familyos_customChores");
-          if (local) {
-            const parsed = JSON.parse(local);
-            setCustomChores(parsed);
-            console.log("📤 Migrating customChores from localStorage to Supabase...");
-            await SB.upsertSetting("custom_chores", local);
-            console.log("📤 Migration complete");
-          }
-        } catch(e) { console.warn("localStorage migration error:", e); }
+      // Load trips from Supabase
+      const tripRows = await SB.getSetting("family_trips").catch(() => []);
+      if (tripRows && tripRows[0] && tripRows[0].value) {
+        try { setTrips(JSON.parse(tripRows[0].value)); } catch {}
       }
 
       const allCompRows = await sb("task_completions", "GET", null,
@@ -2532,16 +2859,10 @@ function AppInner() {
     setLoading(false);
   }
 
-  async function saveCustomChores(next) {
-    setCustomChores(next);
-    try {
-      await SB.upsertSetting("custom_chores", JSON.stringify(next));
-      console.log("💾 custom_chores saved to Supabase");
-    } catch(e) {
-      console.error("saveCustomChores Supabase error:", e);
-      // Fallback: at least keep it in localStorage so the current device works
-      try { localStorage.setItem("familyos_customChores", JSON.stringify(next)); } catch {}
-    }
+  async function saveTrips(next) {
+    setTrips(next);
+    try { await SB.upsertSetting("family_trips", JSON.stringify(next)); }
+    catch(e) { console.error("saveTrips error:", e); }
   }
 
   useEffect(() => {
@@ -2690,7 +3011,7 @@ function AppInner() {
     family={family} events={events} setEvents={setEvents}
     tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals}
     choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments}
-    customChores={customChores} saveCustomChores={saveCustomChores}
+    trips={trips} saveTrips={saveTrips}
     dbTaskRows={dbTaskRows} dbGoalRows={dbGoalRows} onReload={loadAll}
     screensaverMsg={screensaverMsg} setScreensaverMsg={setScreensaverMsg}
   />;
@@ -2699,8 +3020,9 @@ function AppInner() {
     <div style={{ background:T.bg, width:"100vw", minHeight:"100vh", overflowX:"hidden", userSelect:"none", WebkitUserSelect:"none", MozUserSelect:"none", touchAction:"pan-y" }}>
       {screensaverEl}
       <TopBar onAdmin={goAdmin} />
+      {page==="trips"    && <TripsPage    trips={trips} family={family} />}
       {page==="calendar" && <CalendarPage family={family} events={events} />}
-      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores}
+      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments}
         onRainbowDay={(memberId, dateStr) => {
           SB.logRainbowDay(memberId, dateStr);
           SB.getRainbowDays().then(r => setRainbowDays(r||[]));
