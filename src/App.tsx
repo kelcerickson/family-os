@@ -1212,7 +1212,7 @@ function GoalsQuadrant({ family, goals, setGoals, dbGoalRows, activeMember }) {
   );
 }
 
-function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, allCompletions, tasks, dbGoalRows }) {
+function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, allCompletions, tasks, dbGoalRows, choreAssignments }) {
   const [activeMember, setActiveMember] = useState(family[0]);
 
   // ── Real Badge Engine ─────────────────────────────────────────────────────
@@ -1297,9 +1297,74 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     return BADGE_DEFS.filter(b => b.check(stats));
   }
 
-  const streak  = streaks[activeMember.id]  || 0;
-  const wPts    = weekPts[activeMember.id]  || 0;
-  const todayPts = SECTIONS.length;
+  const streak = streaks[activeMember.id] || 0;
+
+  // ── Dynamic points from allCompletions ─────────────────────────────────────
+  // Rules: 1 pt per CORE section fully completed for the day
+  //        + bonusPoints per completed bonus task
+  // Chore section is checked against ALL completions for that date (since chores
+  // aren't in the tasks table, any chore completion = contribute section activity)
+  function computePtsForMember(memberId, fromDateStr, toDateStr) {
+    const memberComps = (allCompletions||[]).filter(c =>
+      c.member_id === memberId &&
+      c.completed_date >= fromDateStr &&
+      c.completed_date <= toDateStr
+    );
+    // Group completions by date
+    const byDate = {};
+    memberComps.forEach(c => {
+      if (!byDate[c.completed_date]) byDate[c.completed_date] = [];
+      byDate[c.completed_date].push(c.task_label);
+    });
+    const memberTasks = tasks[memberId] || {};
+    let total = 0;
+    Object.entries(byDate).forEach(([dateStr, completedLabels]) => {
+      // 1 pt per core section where all tasks completed that day
+      for (const sec of ["learn","exercise","goals"]) {
+        const secTasks = (memberTasks[sec]||[]).filter(t => {
+          // filter by recurrence for that date
+          if (!t.recurrence || t.recurrence === "daily") return true;
+          const d = new Date(dateStr + "T00:00:00");
+          if (t.recurrence === "weekly") return (t.dows||[]).includes(d.getDay());
+          if (t.recurrence === "once") return t.specificDate === dateStr;
+          return true;
+        });
+        if (secTasks.length > 0 && secTasks.every(t => completedLabels.includes(t.label))) {
+          total += 1;
+        }
+      }
+      // Contribute: any chore completion on this date = section active
+      // We count it as done if at least one chore was completed
+      // (can't reconstruct exact chore schedule from ProgressPage without choreAssignments)
+      const choreComps = completedLabels.filter(lbl =>
+        !Object.values(memberTasks).flat().some(t => t.label === lbl)
+      );
+      if (choreComps.length > 0) total += 1;
+
+      // Bonus tasks: add bonusPoints per completed bonus task
+      for (const t of (memberTasks.bonus||[])) {
+        if (completedLabels.includes(t.label)) total += (t.bonusPoints || 1);
+      }
+    });
+    return total;
+  }
+
+  function dateStr(d) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  const todayD    = getMountainToday();
+  const todayS    = dateStr(todayD);
+  const todayPts  = computePtsForMember(activeMember.id, todayS, todayS);
+
+  const thisMonD  = new Date(todayD);
+  thisMonD.setDate(todayD.getDate() - ((todayD.getDay()+6)%7));
+  const wPts      = computePtsForMember(activeMember.id, dateStr(thisMonD), todayS);
+
+  const lastMonD  = new Date(thisMonD); lastMonD.setDate(thisMonD.getDate()-7);
+  const lastSunD  = new Date(thisMonD); lastSunD.setDate(thisMonD.getDate()-1);
+  const lastWeekPts = computePtsForMember(activeMember.id, dateStr(lastMonD), dateStr(lastSunD));
+
   const earnedBadges = getEarnedBadges(activeMember.id);
 
   return (
@@ -1422,16 +1487,20 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
           </>);
         })()}
 
-        {/* Points & Money */}
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:18 }}>
-          {[{label:"Today",pts:todayPts},{label:"This Week",pts:wPts}].map(card => (
-            <div key={card.label} style={{ background:T.white, border:`2px solid ${T.border}`, borderRadius:18, padding:"14px 12px", textAlign:"center" }}>
-              <div style={{ fontSize:11, fontWeight:700, color:T.muted, letterSpacing:0.8, textTransform:"uppercase", marginBottom:6 }}>{card.label}</div>
-              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:30, fontWeight:700, color:activeMember.color, lineHeight:1 }}>{card.pts}</div>
-              <div style={{ fontSize:11, color:T.sub, marginTop:2 }}>pts</div>
-              <div style={{ marginTop:10, paddingTop:10, borderTop:`1px solid ${T.border}` }}>
-                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:20, fontWeight:700, color:"#2D7A56" }}>${(card.pts*0.25).toFixed(2)}</div>
-                <div style={{ fontSize:10, color:T.muted }}>earned</div>
+        {/* Points & Money — Today / This Week / Last Week */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:18 }}>
+          {[
+            { label:"Today",     pts:todayPts,    dimmed:false },
+            { label:"This Week", pts:wPts,         dimmed:false },
+            { label:"Last Week", pts:lastWeekPts,  dimmed:true  },
+          ].map(card => (
+            <div key={card.label} style={{ background:card.dimmed?"#F5F3EF":T.white, border:`2px solid ${card.dimmed?T.stone:T.border}`, borderRadius:16, padding:"12px 8px", textAlign:"center" }}>
+              <div style={{ fontSize:10, fontWeight:700, color:T.muted, letterSpacing:0.7, textTransform:"uppercase", marginBottom:5 }}>{card.label}</div>
+              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color:card.dimmed?T.sub:activeMember.color, lineHeight:1 }}>{card.pts}</div>
+              <div style={{ fontSize:10, color:T.sub, marginTop:2 }}>pts</div>
+              <div style={{ marginTop:8, paddingTop:8, borderTop:`1px solid ${T.border}` }}>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:card.dimmed?T.sub:"#2D7A56" }}>${(card.pts*0.25).toFixed(2)}</div>
+                <div style={{ fontSize:9, color:T.muted }}>earned</div>
               </div>
             </div>
           ))}
@@ -2499,7 +2568,6 @@ function TripsPage({ trips, family }) {
         <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted }}>{upcoming.length} upcoming · {past.length} completed</div>
       </div>
 
-      {/* BIG feature card — tall rectangle, image really shows */}
       {next && (() => {
         const days = tripDaysAway(next.startDate);
         const nights = tripNights(next.startDate, next.endDate);
@@ -2508,7 +2576,6 @@ function TripsPage({ trips, family }) {
           <div style={{ margin:"0 12px 16px", borderRadius:24, overflow:"hidden", position:"relative", height:320, boxShadow:"0 8px 32px rgba(0,0,0,0.2)" }}>
             <div style={{ position:"absolute", inset:0, backgroundImage:`url(${tripImageUrl(next)})`, backgroundSize:"cover", backgroundPosition:"center" }} />
             <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.85) 100%)" }} />
-            {/* Top row */}
             <div style={{ position:"absolute", top:0, left:0, right:0, zIndex:2, padding:"16px 18px", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
               <div style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(6px)", borderRadius:99, padding:"5px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color:"#fff", letterSpacing:1 }}>NEXT UP</div>
               {days !== null && days >= 0 && (
@@ -2519,27 +2586,19 @@ function TripsPage({ trips, family }) {
               )}
               {days !== null && days < 0 && <div style={{ background:"#2D7A56", borderRadius:16, padding:"8px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:"#fff" }}>Happening now! 🎉</div>}
             </div>
-            {/* Bottom info */}
             <div style={{ position:"absolute", bottom:0, left:0, right:0, zIndex:2, padding:"20px 18px" }}>
               <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:30, fontWeight:700, color:"#fff", lineHeight:1.15, textShadow:"0 2px 12px rgba(0,0,0,0.5)" }}>{next.destination}</div>
-              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:14, color:"rgba(255,255,255,0.9)", marginTop:4, marginBottom:12 }}>
-                {formatTripDates(next.startDate, next.endDate)}{nights > 0 ? ` · ${nights} night${nights!==1?"s":""}` : ""}
-              </div>
+              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:14, color:"rgba(255,255,255,0.9)", marginTop:4, marginBottom:12 }}>{formatTripDates(next.startDate, next.endDate)}{nights > 0 ? ` · ${nights} night${nights!==1?"s":""}` : ""}</div>
               <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
                 {next.location  && <div style={{ background:"rgba(255,255,255,0.18)", backdropFilter:"blur(4px)", borderRadius:99, padding:"4px 11px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>📍 {next.location}</div>}
                 {next.tripType  && <div style={{ background:"rgba(255,255,255,0.18)", backdropFilter:"blur(4px)", borderRadius:99, padding:"4px 11px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>{next.tripType}</div>}
-                {members.length > 0 && (
-                  <div style={{ display:"flex", gap:4, marginLeft:"auto" }}>
-                    {members.map(m => <div key={m.id} style={{ width:28, height:28, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"2px solid rgba(255,255,255,0.65)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>{m.emoji}</div>)}
-                  </div>
-                )}
+                {members.length > 0 && <div style={{ display:"flex", gap:4, marginLeft:"auto" }}>{members.map(m => <div key={m.id} style={{ width:28, height:28, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"2px solid rgba(255,255,255,0.65)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>{m.emoji}</div>)}</div>}
               </div>
             </div>
           </div>
         );
       })()}
 
-      {/* Smaller upcoming — 3 per row, square-ish */}
       {rest.length > 0 && (
         <div style={{ padding:"0 12px" }}>
           <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub, marginBottom:10, letterSpacing:.6 }}>COMING UP</div>
@@ -2552,22 +2611,11 @@ function TripsPage({ trips, family }) {
                   <div style={{ position:"absolute", inset:0, backgroundImage:`url(${tripImageUrl(trip)})`, backgroundSize:"cover", backgroundPosition:"center" }} />
                   <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.68) 100%)" }} />
                   <div style={{ position:"absolute", inset:0, zIndex:2, padding:"8px", display:"flex", flexDirection:"column", justifyContent:"space-between" }}>
-                    {/* Countdown top-right */}
-                    {days !== null && days >= 0 && (
-                      <div style={{ alignSelf:"flex-end", background:"rgba(0,0,0,0.4)", backdropFilter:"blur(4px)", borderRadius:10, padding:"3px 7px", textAlign:"center", border:"1px solid rgba(255,255,255,0.15)" }}>
-                        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div>
-                        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:8, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:.8, textTransform:"uppercase" }}>days</div>
-                      </div>
-                    )}
-                    {/* Info bottom */}
+                    {days !== null && days >= 0 && <div style={{ alignSelf:"flex-end", background:"rgba(0,0,0,0.4)", backdropFilter:"blur(4px)", borderRadius:10, padding:"3px 7px", textAlign:"center", border:"1px solid rgba(255,255,255,0.15)" }}><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div><div style={{ fontFamily:"'Nunito',sans-serif", fontSize:8, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:.8, textTransform:"uppercase" }}>days</div></div>}
                     <div>
                       <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:"#fff", lineHeight:1.2, textShadow:"0 1px 6px rgba(0,0,0,0.6)" }}>{trip.destination}</div>
                       <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, color:"rgba(255,255,255,0.85)", marginTop:2 }}>{formatTripDates(trip.startDate, trip.endDate)}</div>
-                      {members.length > 0 && (
-                        <div style={{ display:"flex", gap:2, marginTop:5 }}>
-                          {members.map(m => <div key={m.id} style={{ width:18, height:18, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"1.5px solid rgba(255,255,255,0.65)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10 }}>{m.emoji}</div>)}
-                        </div>
-                      )}
+                      {members.length > 0 && <div style={{ display:"flex", gap:2, marginTop:5 }}>{members.map(m => <div key={m.id} style={{ width:18, height:18, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"1.5px solid rgba(255,255,255,0.65)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10 }}>{m.emoji}</div>)}</div>}
                     </div>
                   </div>
                 </div>
@@ -2577,7 +2625,6 @@ function TripsPage({ trips, family }) {
         </div>
       )}
 
-      {/* Past trips */}
       {past.length > 0 && (
         <div style={{ padding:"0 12px" }}>
           <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.muted, marginBottom:10, letterSpacing:.6 }}>MEMORIES</div>
@@ -2634,7 +2681,6 @@ function AdminTrips({ family, trips, saveTrips }) {
     <div>
       <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>✈️ Trips</h2>
       <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>Add your family trips. Each shows on the Trips page with a photo, countdown, and who's going.</p>
-
       {showForm && (
         <div style={{ background:T.white, borderRadius:16, border:`2px solid ${editingId?"#3B6FA0":T.border}`, padding:"18px 20px", marginBottom:20 }}>
           <h3 style={{ fontSize:17, fontWeight:700, color:editingId?"#3B6FA0":T.text, margin:"0 0 16px" }}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
@@ -2643,42 +2689,16 @@ function AdminTrips({ family, trips, saveTrips }) {
             <input value={form.destination} onChange={e=>setForm(f=>({...f,destination:e.target.value}))} placeholder="e.g. Outer Banks, Yellowstone" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:15, boxSizing:"border-box" }} />
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Date *</label>
-              <input type="date" value={form.startDate} onChange={e=>setForm(f=>({...f,startDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
-            </div>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>End Date</label>
-              <input type="date" value={form.endDate} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
-            </div>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Location / State</label>
-              <input value={form.location} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="e.g. North Carolina" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
-            </div>
-            <div>
-              <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Trip Type</label>
-              <select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box", background:T.white }}>
-                <option value="">Select type…</option>
-                {TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
+            <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Date *</label><input type="date" value={form.startDate} onChange={e=>setForm(f=>({...f,startDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
+            <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>End Date</label><input type="date" value={form.endDate} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
+            <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Location / State</label><input value={form.location} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="e.g. North Carolina" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
+            <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Trip Type</label><select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box", background:T.white }}><option value="">Select type…</option>{TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
           </div>
-          <div style={{ marginBottom:12 }}>
-            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Photo Keyword <span style={{ fontWeight:400, color:T.muted }}>(auto-finds a background photo)</span></label>
-            <input value={form.imageKeyword} onChange={e=>setForm(f=>({...f,imageKeyword:e.target.value}))} placeholder="e.g. outer banks beach, yellowstone bison, new york skyline" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} />
-          </div>
-          <div style={{ marginBottom:16 }}>
-            <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Custom Photo URL <span style={{ fontWeight:400, color:T.muted }}>(optional — overrides keyword)</span></label>
-            <input value={form.photoUrl} onChange={e=>setForm(f=>({...f,photoUrl:e.target.value}))} placeholder="https://your-photo-url.jpg" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:13, boxSizing:"border-box" }} />
-          </div>
+          <div style={{ marginBottom:12 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Photo Keyword <span style={{ fontWeight:400, color:T.muted }}>(auto-finds a background photo)</span></label><input value={form.imageKeyword} onChange={e=>setForm(f=>({...f,imageKeyword:e.target.value}))} placeholder="e.g. outer banks beach, yellowstone bison" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
+          <div style={{ marginBottom:16 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Custom Photo URL <span style={{ fontWeight:400, color:T.muted }}>(optional — overrides keyword)</span></label><input value={form.photoUrl} onChange={e=>setForm(f=>({...f,photoUrl:e.target.value}))} placeholder="https://your-photo-url.jpg" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:13, boxSizing:"border-box" }} /></div>
           <div style={{ marginBottom:16 }}>
             <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Who's Going?</label>
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-              {family.map(m => {
-                const on = (form.memberIds||[]).includes(m.id);
-                return <button key={m.id} onClick={() => setForm(f => ({ ...f, memberIds: on ? f.memberIds.filter(id=>id!==m.id) : [...(f.memberIds||[]), m.id] }))} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${on?m.color:T.border}`, background:on?m.color:"transparent", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:on?"#fff":T.sub }}>{m.emoji} {m.name}</button>;
-              })}
-            </div>
+            <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>{family.map(m => { const on=(form.memberIds||[]).includes(m.id); return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${on?m.color:T.border}`, background:on?m.color:"transparent", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:on?"#fff":T.sub }}>{m.emoji} {m.name}</button>; })}</div>
           </div>
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={saveTripForm} disabled={saving} style={{ flex:1, padding:"12px", borderRadius:12, background:editingId?"#3B6FA0":T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
@@ -2686,10 +2706,8 @@ function AdminTrips({ family, trips, saveTrips }) {
           </div>
         </div>
       )}
-
-      {!showForm && <button onClick={() => { setEditingId(null); setForm(EMPTY_TRIP); setShowForm(true); }} style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 20px", borderRadius:14, background:T.stone, border:`2px dashed ${T.border}`, cursor:"pointer", width:"100%", marginBottom:20, boxSizing:"border-box" }}><span style={{ fontSize:20, color:T.muted }}>+</span><span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:600, color:T.sub }}>Add a trip</span></button>}
-      {sorted.length === 0 && !showForm && <div style={{ textAlign:"center", padding:"32px", color:T.muted, fontFamily:"'Nunito',sans-serif" }}>No trips yet. Tap above to plan your first adventure!</div>}
-
+      {!showForm && <button onClick={()=>{setEditingId(null);setForm(EMPTY_TRIP);setShowForm(true);}} style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 20px", borderRadius:14, background:T.stone, border:`2px dashed ${T.border}`, cursor:"pointer", width:"100%", marginBottom:20, boxSizing:"border-box" }}><span style={{ fontSize:20, color:T.muted }}>+</span><span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:600, color:T.sub }}>Add a trip</span></button>}
+      {sorted.length===0 && !showForm && <div style={{ textAlign:"center", padding:"32px", color:T.muted, fontFamily:"'Nunito',sans-serif" }}>No trips yet. Tap above to plan your first adventure!</div>}
       {sorted.map(trip => {
         const days = tripDaysAway(trip.startDate);
         const nights = tripNights(trip.startDate, trip.endDate);
@@ -2698,18 +2716,16 @@ function AdminTrips({ family, trips, saveTrips }) {
             <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px" }}>
               <div style={{ flex:1 }}>
                 <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:17, fontWeight:700, color:T.text }}>{trip.destination}</div>
-                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted, marginTop:2 }}>{formatTripDates(trip.startDate, trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted, marginTop:2 }}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
                 {trip.location && <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.sub, marginTop:2 }}>📍 {trip.location}</div>}
-                <div style={{ display:"flex", gap:4, marginTop:6 }}>{(trip.memberIds||[]).map(id => { const m = family.find(x=>x.id===id); return m ? <span key={id} style={{ fontSize:16 }}>{m.emoji}</span> : null; })}</div>
+                <div style={{ display:"flex", gap:4, marginTop:6 }}>{(trip.memberIds||[]).map(id=>{const m=family.find(x=>x.id===id);return m?<span key={id} style={{fontSize:16}}>{m.emoji}</span>:null;})}</div>
               </div>
               <div style={{ textAlign:"center", minWidth:44 }}>
-                {days === null ? null : days < 0 ? <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, color:T.muted }}>Past</div>
-                  : days === 0 ? <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, color:"#2D7A56", fontWeight:700 }}>Today!</div>
-                  : <><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:22, fontWeight:700, color:T.text, lineHeight:1 }}>{days}</div><div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, color:T.muted }}>days</div></>}
+                {days===null?null:days<0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:T.muted}}>Past</div>:days===0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:"#2D7A56",fontWeight:700}}>Today!</div>:<><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:22,fontWeight:700,color:T.text,lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,color:T.muted}}>days</div></>}
               </div>
               <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                <button onClick={() => startEdit(trip)} style={{ padding:"6px 12px", borderRadius:8, background:"#D6E8F7", color:"#3B6FA0", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Edit</button>
-                <button onClick={() => deleteTrip(trip.id)} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
+                <button onClick={()=>startEdit(trip)} style={{ padding:"6px 12px", borderRadius:8, background:"#D6E8F7", color:"#3B6FA0", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Edit</button>
+                <button onClick={()=>deleteTrip(trip.id)} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
               </div>
             </div>
           </div>
@@ -2974,7 +2990,8 @@ function AppInner() {
         }} />}
       {page==="progress" && <ProgressPage family={family} goals={goals} setGoals={setGoals}
         streaks={streaks} weekPts={weekPts} rainbowDays={rainbowDays}
-        allCompletions={allCompletions} tasks={tasks} dbGoalRows={dbGoalRows} />}
+        allCompletions={allCompletions} tasks={tasks} dbGoalRows={dbGoalRows}
+        choreAssignments={choreAssignments} />}
       <BottomNav page={page} onPage={setPage} />
     </div>
   );
