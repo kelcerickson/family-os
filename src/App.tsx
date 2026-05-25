@@ -1299,53 +1299,101 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
 
   const streak = streaks[activeMember.id] || 0;
 
-  function computePtsForMember(memberId, fromDateStr, toDateStr) {
+  // ── Points calculation ──────────────────────────────────────────────────────
+  // Week = Sunday through Saturday (getDay(): Sun=0, Sat=6)
+  // Scoring:
+  //   1 pt per core section (learn/exercise/goals) where ALL tasks are completed
+  //   1 pt for contribute if any chore completion exists that day
+  //   + bonusPoints for each completed bonus task
+  function ds(d) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  function computePtsForMember(memberId, fromStr, toStr) {
     const memberComps = (allCompletions||[]).filter(c =>
       c.member_id === memberId &&
-      c.completed_date >= fromDateStr &&
-      c.completed_date <= toDateStr
+      c.completed_date >= fromStr &&
+      c.completed_date <= toStr
     );
+    if (memberComps.length === 0) return 0;
+
     const byDate = {};
     memberComps.forEach(c => {
       if (!byDate[c.completed_date]) byDate[c.completed_date] = [];
       byDate[c.completed_date].push(c.task_label);
     });
+
     const memberTasks = tasks[memberId] || {};
+
+    // Build sets of known task labels per section for fast lookup
+    const learnLabels   = new Set((memberTasks.learn   ||[]).map(t => t.label));
+    const exerciseLabels= new Set((memberTasks.exercise||[]).map(t => t.label));
+    const goalsLabels   = new Set((memberTasks.goals   ||[]).map(t => t.label));
+    const bonusLabels   = new Map((memberTasks.bonus   ||[]).map(t => [t.label, t.bonusPoints||1]));
+    const openLabels    = new Set((memberTasks.open    ||[]).map(t => t.label));
+    // Any label not in the above sets = chore (contribute section)
+    const allKnownLabels = new Set([...learnLabels, ...exerciseLabels, ...goalsLabels, ...bonusLabels.keys(), ...openLabels]);
+
     let total = 0;
+
     Object.entries(byDate).forEach(([dateStr, completedLabels]) => {
-      for (const sec of ["learn","exercise","goals"]) {
-        const secTasks = (memberTasks[sec]||[]).filter(t => {
+      const dateObj = new Date(dateStr + "T00:00:00");
+      const dow = dateObj.getDay();
+
+      // Helper: filter tasks active on this date by recurrence
+      function activeTasks(labelSet, taskList) {
+        return (taskList||[]).filter(t => {
           if (!t.recurrence || t.recurrence === "daily") return true;
-          const d = new Date(dateStr + "T00:00:00");
-          if (t.recurrence === "weekly") return (t.dows||[]).includes(d.getDay());
-          if (t.recurrence === "once") return t.specificDate === dateStr;
+          if (t.recurrence === "weekly") return (t.dows||[]).includes(dow);
+          if (t.recurrence === "once")   return t.specificDate === dateStr;
           return true;
         });
-        if (secTasks.length > 0 && secTasks.every(t => completedLabels.includes(t.label))) total += 1;
       }
-      // Contribute: any label not in learn/exercise/goals/bonus = chore completion
-      const allKnownLabels = new Set([
-        ...(memberTasks.learn||[]), ...(memberTasks.exercise||[]),
-        ...(memberTasks.goals||[]), ...(memberTasks.bonus||[]), ...(memberTasks.open||[])
-      ].map(t => t.label));
-      if (completedLabels.some(lbl => !allKnownLabels.has(lbl))) total += 1;
-      // Bonus tasks
-      for (const t of (memberTasks.bonus||[])) {
-        if (completedLabels.includes(t.label)) total += (t.bonusPoints || 1);
-      }
+
+      // Learn: 1 pt if all active learn tasks completed
+      const activeLrn = activeTasks(learnLabels, memberTasks.learn||[]);
+      if (activeLrn.length > 0 && activeLrn.every(t => completedLabels.includes(t.label))) total += 1;
+
+      // Exercise: 1 pt if all active exercise tasks completed
+      const activeEx = activeTasks(exerciseLabels, memberTasks.exercise||[]);
+      if (activeEx.length > 0 && activeEx.every(t => completedLabels.includes(t.label))) total += 1;
+
+      // Goals: 1 pt if all active goals tasks completed
+      const activeGl = activeTasks(goalsLabels, memberTasks.goals||[]);
+      if (activeGl.length > 0 && activeGl.every(t => completedLabels.includes(t.label))) total += 1;
+
+      // Contribute: 1 pt if any chore (unknown label) was completed that day
+      // We can't reconstruct full chore schedule here, so any chore completion = section active
+      const hasChoreCompletion = completedLabels.some(lbl => !allKnownLabels.has(lbl));
+      if (hasChoreCompletion) total += 1;
+
+      // Bonus tasks: add bonusPoints per completed bonus task
+      completedLabels.forEach(lbl => {
+        if (bonusLabels.has(lbl)) total += bonusLabels.get(lbl);
+      });
     });
+
     return total;
   }
 
-  function ds(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-  const todayD = getMountainToday();
-  const todayS = ds(todayD);
-  const todayPts = computePtsForMember(activeMember.id, todayS, todayS);
-  const monD = new Date(todayD); monD.setDate(todayD.getDate() - ((todayD.getDay()+6)%7));
-  const wPts = computePtsForMember(activeMember.id, ds(monD), todayS);
-  const lmD = new Date(monD); lmD.setDate(monD.getDate()-7);
-  const lsD = new Date(monD); lsD.setDate(monD.getDate()-1);
-  const lastWeekPts = computePtsForMember(activeMember.id, ds(lmD), ds(lsD));
+  const todayD   = getMountainToday();
+  const todayS   = ds(todayD);
+
+  // This week: Sun → Sat (getDay() gives 0=Sun, so Sun is already start)
+  const thisSunD = new Date(todayD);
+  thisSunD.setDate(todayD.getDate() - todayD.getDay()); // back to Sunday
+  const thisSatD = new Date(thisSunD);
+  thisSatD.setDate(thisSunD.getDate() + 6);
+
+  // Last week: Sun → Sat of the prior week
+  const lastSunD = new Date(thisSunD);
+  lastSunD.setDate(thisSunD.getDate() - 7);
+  const lastSatD = new Date(lastSunD);
+  lastSatD.setDate(lastSunD.getDate() + 6);
+
+  const todayPts    = computePtsForMember(activeMember.id, todayS, todayS);
+  const wPts        = computePtsForMember(activeMember.id, ds(thisSunD), ds(thisSatD));
+  const lastWeekPts = computePtsForMember(activeMember.id, ds(lastSunD), ds(lastSatD));
 
   const earnedBadges = getEarnedBadges(activeMember.id);
 
