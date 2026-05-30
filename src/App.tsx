@@ -278,14 +278,21 @@ const ANNUAL_CHORES = [
 const INIT_CHORE_ASSIGNMENTS = {};
 
 // Helper: get chores for a specific date
-function getChoresForDate(date, choreAssignments) {
-  const dow = date.getDay(); // 0=Sun
-  const day = date.getDate();
-  const month = date.getMonth();
+function getChoresForDate(date, choreAssignments, customChores) {
+  const dow = date.getDay();
+  const cc = customChores || {};
+  const renames = cc._renames || {};
+  const hidden  = new Set(cc._hidden  || []);
 
-  // Load custom chores from localStorage
-  let customChores = {};
-  try { customChores = JSON.parse(localStorage.getItem("familyos_customChores") || "{}"); } catch {}
+  function resolveList(base, key) {
+    const custom = cc[key] || [];
+    const renamedOrig = Object.keys(renames).filter(k => k.startsWith(key+"|")).map(k => k.slice((key+"|").length));
+    const resolved = base
+      .filter(c => !renamedOrig.includes(c) && !hidden.has(key+"|"+c))
+      .concat(renamedOrig.filter(c => !hidden.has(key+"|"+c)).map(c => renames[key+"|"+c]));
+    const seen = new Set(resolved);
+    return [...resolved, ...custom.filter(c => !hidden.has(key+"|"+c) && !seen.has(c))];
+  }
 
   // Is it the 1st Thursday of the month?
   function isFirstThursday(d) {
@@ -309,42 +316,19 @@ function getChoresForDate(date, choreAssignments) {
   // Always add daily-all chores
   DAILY_CHORES_ALL.forEach(c => allChores.push({ label:c, assignedTo:"all" }));
 
-  // Add weekly chores for this day (base + custom)
-  const weeklyBase = WEEKLY_CHORES[dow] || [];
-  const weeklyCustom = customChores[`weekly_${dow}`] || [];
-  [...weeklyBase, ...weeklyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
-
-  // Add daily-individual chores (base + custom)
-  const dailyCustom = customChores["daily_ind"] || [];
-  [...DAILY_CHORES_INDIVIDUAL, ...dailyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
-
-  // Monthly (base + custom)
-  if (isFirstThursday(date)) {
-    const monthlyCustom = customChores["monthly"] || [];
-    [...MONTHLY_CHORES, ...monthlyCustom].forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly" }));
-  }
-
-  // Quarterly
-  if (isFirstThursdayOfQuarter(date)) {
-    QUARTERLY_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly" }));
-  }
-
-  // Semi-annual
-  if (isFirstThursdayOfSemiAnnual(date)) {
-    SEMI_ANNUAL_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
-  }
-
-  // Annual
-  if (isFirstThursdayOfYear(date)) {
-    ANNUAL_CHORES.forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"annual" }));
-  }
+  resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+  resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+  if (isFirstThursday(date))           resolveList(MONTHLY_CHORES,     "monthly"    ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly"     }));
+  if (isFirstThursdayOfQuarter(date))  resolveList(QUARTERLY_CHORES,   "quarterly"  ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly"   }));
+  if (isFirstThursdayOfSemiAnnual(date)) resolveList(SEMI_ANNUAL_CHORES,"semi_annual").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
+  if (isFirstThursdayOfYear(date))     resolveList(ANNUAL_CHORES,      "annual"     ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"annual"      }));
 
   return allChores;
 }
 
 // Build contribute tasks for each member on a given date
-function getContributeTasksForMember(memberId, date, choreAssignments) {
-  const allChores = getChoresForDate(date, choreAssignments);
+function getContributeTasksForMember(memberId, date, choreAssignments, customChores) {
+  const allChores = getChoresForDate(date, choreAssignments, customChores);
   return allChores
     .filter(c => c.assignedTo === "all" || (Array.isArray(c.assignedTo) && c.assignedTo.includes(memberId)))
     .map((c, i) => ({ id: i+1, label: c.label, done: false, freq: c.freq || "daily" }));
@@ -837,7 +821,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
   );
 }
 
-function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay }) {
+function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, customChores }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
   // Task completions loaded from Supabase per day (moved after viewDate)
@@ -932,7 +916,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay }) {
         <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", width:"100vw", alignItems:"stretch" }}>
           {activeMembers.map(m => {
             // Merge stored tasks with auto-generated chore tasks for today
-            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments);
+            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments, customChores);
             // Use tasks from Supabase, filtered by recurrence for viewDate
             const dbMemberTasks = dbTasks[m.id] || { learn:[], exercise:[], contribute:[], goals:[] };
             function filterByDate(taskList) {
@@ -1297,104 +1281,36 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     return BADGE_DEFS.filter(b => b.check(stats));
   }
 
-  const streak = streaks[activeMember.id] || 0;
-
-  // ── Points calculation ──────────────────────────────────────────────────────
-  // Week = Sunday through Saturday (getDay(): Sun=0, Sat=6)
-  // Scoring:
-  //   1 pt per core section (learn/exercise/goals) where ALL tasks are completed
-  //   1 pt for contribute if any chore completion exists that day
-  //   + bonusPoints for each completed bonus task
-  function ds(d) {
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-
+  const streak  = streaks[activeMember.id]  || 0;
+  function ds(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
   function computePtsForMember(memberId, fromStr, toStr) {
-    const memberComps = (allCompletions||[]).filter(c =>
-      c.member_id === memberId &&
-      c.completed_date >= fromStr &&
-      c.completed_date <= toStr
-    );
-    if (memberComps.length === 0) return 0;
-
+    const memberComps = (allCompletions||[]).filter(c => c.member_id === memberId && c.completed_date >= fromStr && c.completed_date <= toStr);
+    if (!memberComps.length) return 0;
     const byDate = {};
-    memberComps.forEach(c => {
-      if (!byDate[c.completed_date]) byDate[c.completed_date] = [];
-      byDate[c.completed_date].push(c.task_label);
-    });
-
-    const memberTasks = tasks[memberId] || {};
-
-    // Build sets of known task labels per section for fast lookup
-    const learnLabels   = new Set((memberTasks.learn   ||[]).map(t => t.label));
-    const exerciseLabels= new Set((memberTasks.exercise||[]).map(t => t.label));
-    const goalsLabels   = new Set((memberTasks.goals   ||[]).map(t => t.label));
-    const bonusLabels   = new Map((memberTasks.bonus   ||[]).map(t => [t.label, t.bonusPoints||1]));
-    const openLabels    = new Set((memberTasks.open    ||[]).map(t => t.label));
-    // Any label not in the above sets = chore (contribute section)
-    const allKnownLabels = new Set([...learnLabels, ...exerciseLabels, ...goalsLabels, ...bonusLabels.keys(), ...openLabels]);
-
+    memberComps.forEach(c => { if (!byDate[c.completed_date]) byDate[c.completed_date] = []; byDate[c.completed_date].push(c.task_label); });
+    const mt = tasks[memberId] || {};
+    const bonusMap = new Map((mt.bonus||[]).map(t => [t.label, t.bonusPoints||1]));
+    const allKnown = new Set([...(mt.learn||[]),...(mt.exercise||[]),...(mt.goals||[]),...(mt.bonus||[]),...(mt.open||[])].map(t=>t.label));
     let total = 0;
-
-    Object.entries(byDate).forEach(([dateStr, completedLabels]) => {
-      const dateObj = new Date(dateStr + "T00:00:00");
-      const dow = dateObj.getDay();
-
-      // Helper: filter tasks active on this date by recurrence
-      function activeTasks(labelSet, taskList) {
-        return (taskList||[]).filter(t => {
-          if (!t.recurrence || t.recurrence === "daily") return true;
-          if (t.recurrence === "weekly") return (t.dows||[]).includes(dow);
-          if (t.recurrence === "once")   return t.specificDate === dateStr;
-          return true;
-        });
-      }
-
-      // Learn: 1 pt if all active learn tasks completed
-      const activeLrn = activeTasks(learnLabels, memberTasks.learn||[]);
-      if (activeLrn.length > 0 && activeLrn.every(t => completedLabels.includes(t.label))) total += 1;
-
-      // Exercise: 1 pt if all active exercise tasks completed
-      const activeEx = activeTasks(exerciseLabels, memberTasks.exercise||[]);
-      if (activeEx.length > 0 && activeEx.every(t => completedLabels.includes(t.label))) total += 1;
-
-      // Goals: 1 pt if all active goals tasks completed
-      const activeGl = activeTasks(goalsLabels, memberTasks.goals||[]);
-      if (activeGl.length > 0 && activeGl.every(t => completedLabels.includes(t.label))) total += 1;
-
-      // Contribute: 1 pt if any chore (unknown label) was completed that day
-      // We can't reconstruct full chore schedule here, so any chore completion = section active
-      const hasChoreCompletion = completedLabels.some(lbl => !allKnownLabels.has(lbl));
-      if (hasChoreCompletion) total += 1;
-
-      // Bonus tasks: add bonusPoints per completed bonus task
-      completedLabels.forEach(lbl => {
-        if (bonusLabels.has(lbl)) total += bonusLabels.get(lbl);
-      });
+    Object.entries(byDate).forEach(([dateStr, labels]) => {
+      const dow = new Date(dateStr+"T00:00:00").getDay();
+      function done(list) { const active=(list||[]).filter(t=>!t.recurrence||t.recurrence==="daily"||(t.recurrence==="weekly"&&(t.dows||[]).includes(dow))||(t.recurrence==="once"&&t.specificDate===dateStr)); return active.length>0&&active.every(t=>labels.includes(t.label)); }
+      if (done(mt.learn))     total += 1;
+      if (done(mt.exercise))  total += 1;
+      if (done(mt.goals))     total += 1;
+      if (labels.some(l => !allKnown.has(l))) total += 1; // any chore = contribute pt
+      labels.forEach(l => { if (bonusMap.has(l)) total += bonusMap.get(l); });
     });
-
     return total;
   }
-
-  const todayD   = getMountainToday();
-  const todayS   = ds(todayD);
-
-  // This week: Sun → Sat (getDay() gives 0=Sun, so Sun is already start)
-  const thisSunD = new Date(todayD);
-  thisSunD.setDate(todayD.getDate() - todayD.getDay()); // back to Sunday
-  const thisSatD = new Date(thisSunD);
-  thisSatD.setDate(thisSunD.getDate() + 6);
-
-  // Last week: Sun → Sat of the prior week
-  const lastSunD = new Date(thisSunD);
-  lastSunD.setDate(thisSunD.getDate() - 7);
-  const lastSatD = new Date(lastSunD);
-  lastSatD.setDate(lastSunD.getDate() + 6);
-
+  const todayD = getMountainToday(); const todayS = ds(todayD);
+  const sunD = new Date(todayD); sunD.setDate(todayD.getDate()-todayD.getDay());
+  const satD = new Date(sunD); satD.setDate(sunD.getDate()+6);
+  const lSunD = new Date(sunD); lSunD.setDate(sunD.getDate()-7);
+  const lSatD = new Date(lSunD); lSatD.setDate(lSunD.getDate()+6);
   const todayPts    = computePtsForMember(activeMember.id, todayS, todayS);
-  const wPts        = computePtsForMember(activeMember.id, ds(thisSunD), ds(thisSatD));
-  const lastWeekPts = computePtsForMember(activeMember.id, ds(lastSunD), ds(lastSatD));
-
+  const wPts        = computePtsForMember(activeMember.id, ds(sunD), ds(satD));
+  const lastWeekPts = computePtsForMember(activeMember.id, ds(lSunD), ds(lSatD));
   const earnedBadges = getEarnedBadges(activeMember.id);
 
   return (
@@ -1517,7 +1433,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
           </>);
         })()}
 
-        {/* Points & Money — Today / This Week / Last Week */}
+        {/* Points — Today / This Week / Last Week */}
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:18 }}>
           {[
             { label:"Today",     pts:todayPts,   dimmed:false },
@@ -1547,7 +1463,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
 // ════════════════════════════════════════════════════════════════════════════
 // ADMIN PAGE
 // ════════════════════════════════════════════════════════════════════════════
-function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, trips, saveTrips, dbTaskRows, dbGoalRows, onReload, screensaverMsg, setScreensaverMsg }) {
+function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, customChores, saveCustomChores, trips, saveTrips, dbTaskRows, dbGoalRows, onReload, screensaverMsg, setScreensaverMsg }) {
   const [tab, setTab] = useState("calendar");
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
 
@@ -1634,7 +1550,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
         </div>
 
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
-        {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} />}
+        {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} customChores={customChores} saveCustomChores={saveCustomChores} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
         {tab==="goals"    && <AdminGoals    family={family} goals={goals}   setGoals={setGoals} />}
         {tab==="trips"    && <AdminTrips    family={family} trips={trips}   saveTrips={saveTrips} />}
@@ -1680,9 +1596,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
     if (ev.recurrence === "once") return `Once · ${ev.specificDate}`;
     if (ev.recurrence === "daily") return "Every day";
     const positiveDows = ev.dows ? ev.dows.filter(i => i >= 0) : [];
-    const days = positiveDows.length > 0
-      ? positiveDows.map(i => (DOW_LABELS[i] || "").slice(0,3)).join(", ")
-      : (ev.dow !== undefined ? (DOW_LABELS[ev.dow] || "") : "");
+    const days = positiveDows.length > 0 ? positiveDows.map(i => (DOW_LABELS[i]||"").slice(0,3)).join(", ") : (ev.dow !== undefined ? (DOW_LABELS[ev.dow]||"") : "");
     if (ev.recurrence === "weekly") return `Every ${days}`;
     if (ev.recurrence === "monthly") {
       const weekNum = ev.dows ? Math.abs(ev.dows.find(i => i < 0) || -1) : 1;
@@ -1972,34 +1886,32 @@ const FREQ_GROUPS = [
   { id:"annual",      label:"Annual",              color:"#2D7A56", chores: ANNUAL_CHORES,          desc:"Appears on the 1st Thursday of January" },
 ];
 
-function AdminChores({ family, choreAssignments, setChoreAssignments }) {
+function AdminChores({ family, choreAssignments, setChoreAssignments, customChores, saveCustomChores }) {
   const choreAssignmentsRef = { current: choreAssignments };
-  choreAssignmentsRef.current = choreAssignments; // always current
+  choreAssignmentsRef.current = choreAssignments;
   const [activeFreq, setActiveFreq] = useState("daily_ind");
   const [activeDow, setActiveDow] = useState(1);
-  const [editingChore, setEditingChore] = useState(null); // { oldLabel, newLabel, freq, dow }
+  const [editingChore, setEditingChore] = useState(null);
   const [addingChore, setAddingChore] = useState(false);
   const [newChoreName, setNewChoreName] = useState("");
 
-  // Custom chores added by user (stored in localStorage)
-  const [customChores, setCustomChores] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("familyos_customChores") || "{}"); }
-    catch { return {}; }
-  });
+  // customChores + saveCustomChores are Supabase-backed (passed from AppInner)
 
-  function saveCustomChores(next) {
-    setCustomChores(next);
-    try { localStorage.setItem("familyos_customChores", JSON.stringify(next)); } catch {}
-  }
-
-  // Get chores for a given freq/dow, including custom ones
   function getChorelist(freqId, dow) {
     const base = freqId === "weekly"
       ? (WEEKLY_CHORES[dow] || [])
       : (FREQ_GROUPS.find(f => f.id === freqId)?.chores || []);
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const custom = customChores[key] || [];
-    return [...base, ...custom];
+    const cc = customChores || {};
+    const custom = cc[key] || [];
+    const renames = cc._renames || {};
+    const hidden  = new Set(cc._hidden || []);
+    const renamedOrig = Object.keys(renames).filter(k => k.startsWith(key+"|")).map(k => k.slice((key+"|").length));
+    const resolved = base
+      .filter(c => !renamedOrig.includes(c) && !hidden.has(key+"|"+c))
+      .concat(renamedOrig.filter(c => !hidden.has(key+"|"+c)).map(c => renames[key+"|"+c]));
+    const seen = new Set(resolved);
+    return [...resolved, ...custom.filter(c => !hidden.has(key+"|"+c) && !seen.has(c))];
   }
 
   function addCustomChore() {
@@ -2012,41 +1924,52 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
   }
 
   function renameChore(oldLabel, newLabel, freqId, dow) {
-    if (!newLabel.trim() || newLabel === oldLabel) { setEditingChore(null); return; }
-    // Rename in assignments
-    setChoreAssignments(prev => {
-      const next = { ...prev };
-      if (next[oldLabel] !== undefined) {
-        next[newLabel] = next[oldLabel];
-        delete next[oldLabel];
-        SB.upsertChore(newLabel, next[newLabel]);
-      }
-      return next;
-    });
-    // Rename in custom chores
+    const trimmed = newLabel.trim();
+    if (!trimmed || trimmed === oldLabel) { setEditingChore(null); return; }
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const custom = customChores[key] || [];
-    const idx = custom.indexOf(oldLabel);
-    if (idx >= 0) {
-      const next = { ...customChores, [key]: custom.map((c,i) => i===idx ? newLabel.trim() : c) };
-      saveCustomChores(next);
+    const cc = customChores || {};
+    const custom = cc[key] || [];
+    const base = freqId === "weekly" ? (WEEKLY_CHORES[dow]||[]) : (FREQ_GROUPS.find(f=>f.id===freqId)?.chores||[]);
+    const existingIdx = custom.indexOf(oldLabel);
+    let next = { ...cc };
+    if (existingIdx >= 0) {
+      next = { ...next, [key]: custom.map((c,i) => i===existingIdx ? trimmed : c) };
+    } else {
+      const renames = cc._renames || {};
+      next = { ...next, _renames: { ...renames, [key+"|"+oldLabel]: trimmed } };
+      if (custom.includes(trimmed)) next = { ...next, [key]: custom.filter(c => c !== trimmed) };
     }
+    setChoreAssignments(prev => {
+      const updated = { ...prev };
+      if (updated[oldLabel] !== undefined) {
+        updated[trimmed] = updated[oldLabel];
+        delete updated[oldLabel];
+        SB.upsertChore(trimmed, updated[trimmed]);
+      }
+      return updated;
+    });
+    saveCustomChores(next);
     setEditingChore(null);
   }
 
   function deleteChore(label, freqId, dow) {
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
-    const custom = customChores[key] || [];
-    if (custom.includes(label)) {
-      const next = { ...customChores, [key]: custom.filter(c => c !== label) };
-      saveCustomChores(next);
+    const cc = customChores || {};
+    const custom = cc[key] || [];
+    const renames = cc._renames || {};
+    const renameEntry = Object.entries(renames).find(([k,v]) => k.startsWith(key+"|") && v===label);
+    const base = freqId === "weekly" ? (WEEKLY_CHORES[dow]||[]) : (FREQ_GROUPS.find(f=>f.id===freqId)?.chores||[]);
+    let next = { ...cc };
+    if (custom.includes(label)) next = { ...next, [key]: custom.filter(c => c !== label) };
+    if (renameEntry) {
+      const nr = { ...renames }; delete nr[renameEntry[0]];
+      const origLabel = renameEntry[0].slice((key+"|").length);
+      next = { ...next, _renames: nr, _hidden: [...(cc._hidden||[]), key+"|"+origLabel] };
+    } else if (base.includes(label)) {
+      next = { ...next, _hidden: [...(cc._hidden||[]), key+"|"+label] };
     }
-    // Remove from assignments
-    setChoreAssignments(prev => {
-      const next = { ...prev };
-      delete next[label];
-      return next;
-    });
+    saveCustomChores(next);
+    setChoreAssignments(prev => { const u={...prev}; delete u[label]; SB.upsertChore(label,[]); return u; });
   }
 
   async function toggleAssignment(chore, memberId) {
@@ -2151,17 +2074,18 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
                   {isEditing ? (
                     <input
                       autoFocus
-                      defaultValue={chore}
-                      onBlur={e => renameChore(chore, e.target.value, activeFreq, activeDow)}
+                      value={editingChore.newLabel ?? chore}
+                      onChange={e => setEditingChore(ec => ({ ...ec, newLabel: e.target.value }))}
+                      onBlur={() => renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow)}
                       onKeyDown={e => {
-                        if (e.key === "Enter") renameChore(chore, e.target.value, activeFreq, activeDow);
+                        if (e.key === "Enter") renameChore(chore, editingChore.newLabel ?? chore, activeFreq, activeDow);
                         if (e.key === "Escape") setEditingChore(null);
                       }}
                       style={{ width:"100%", padding:"4px 8px", borderRadius:8, border:`2px solid ${freq.color}`, fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, boxSizing:"border-box" }}
                     />
                   ) : (
                     <div
-                      onClick={() => setEditingChore({ oldLabel: chore })}
+                      onClick={() => setEditingChore({ oldLabel: chore, newLabel: chore })}
                       style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600, color:T.text, cursor:"pointer", padding:"4px 0", display:"flex", alignItems:"center", gap:6 }}
                     >
                       {chore}
@@ -2188,11 +2112,9 @@ function AdminChores({ family, choreAssignments, setChoreAssignments }) {
                   );
                 })}
 
-                {/* Actions: delete (custom only) */}
+                {/* Actions: delete any chore */}
                 <div style={{ display:"flex", justifyContent:"center", gap:4 }}>
-                  {isCustom && (
-                    <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
-                  )}
+                  <button onClick={() => deleteChore(chore, activeFreq, activeDow)} style={{ width:28, height:28, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>×</button>
                 </div>
               </div>
             );
@@ -2552,89 +2474,89 @@ function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
 function tripDaysAway(dateStr) {
   if (!dateStr) return null;
   const today = getMountainToday();
-  const trip = new Date(dateStr + "T00:00:00");
-  return Math.ceil((trip - today) / (1000 * 60 * 60 * 24));
+  return Math.ceil((new Date(dateStr+"T00:00:00") - today) / (1000*60*60*24));
 }
-function formatTripDates(startDate, endDate) {
-  if (!startDate) return "";
-  const opts = { month:"short", day:"numeric" };
-  const start = new Date(startDate + "T00:00:00").toLocaleDateString("en-US", opts);
-  if (!endDate) return start;
-  return `${start} – ${new Date(endDate + "T00:00:00").toLocaleDateString("en-US", opts)}`;
+function formatTripDates(s, e) {
+  if (!s) return "";
+  const o = { month:"short", day:"numeric" };
+  const start = new Date(s+"T00:00:00").toLocaleDateString("en-US", o);
+  return e ? `${start} – ${new Date(e+"T00:00:00").toLocaleDateString("en-US",o)}` : start;
 }
-function tripNights(startDate, endDate) {
-  if (!startDate || !endDate) return 0;
-  return Math.round((new Date(endDate+"T00:00:00") - new Date(startDate+"T00:00:00")) / (1000*60*60*24));
+function tripNights(s, e) {
+  if (!s||!e) return 0;
+  return Math.round((new Date(e+"T00:00:00")-new Date(s+"T00:00:00"))/(1000*60*60*24));
 }
 function tripImageUrl(trip) {
   if (trip.photoUrl) return trip.photoUrl;
-  const kw = encodeURIComponent(trip.imageKeyword || trip.destination || "travel landscape");
-  return `https://source.unsplash.com/featured/800x600?${kw}`;
+  return `https://source.unsplash.com/featured/800x600?${encodeURIComponent(trip.imageKeyword||trip.destination||"travel")}`;
 }
 function TripsPage({ trips, family }) {
-  const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
+  const memberMap = Object.fromEntries(family.map(m=>[m.id,m]));
   const today = getMountainToday();
-  const sorted = [...(trips||[])].sort((a,b) => (a.startDate||"").localeCompare(b.startDate||""));
-  const upcoming = sorted.filter(t => !t.startDate || new Date(t.startDate+"T00:00:00") >= today);
-  const past     = sorted.filter(t =>  t.startDate && new Date(t.startDate+"T00:00:00")  < today);
-  if (sorted.length === 0) {
-    return (
-      <div style={{ padding:"80px 24px", textAlign:"center", fontFamily:"'Fredoka',sans-serif" }}>
-        <div style={{ fontSize:64, marginBottom:16 }}>✈️</div>
-        <div style={{ fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>No trips yet!</div>
-        <div style={{ fontSize:15, color:T.muted }}>Go to Admin → Trips to add your first adventure.</div>
-      </div>
-    );
-  }
-  const [next, ...rest] = upcoming;
+  const sorted = [...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
+  const upcoming = sorted.filter(t=>!t.startDate||new Date(t.startDate+"T00:00:00")>=today);
+  const past     = sorted.filter(t=> t.startDate&&new Date(t.startDate+"T00:00:00")<today);
+  if (!sorted.length) return (
+    <div style={{padding:"80px 24px",textAlign:"center",fontFamily:"'Fredoka',sans-serif"}}>
+      <div style={{fontSize:64,marginBottom:16}}>✈️</div>
+      <div style={{fontSize:22,fontWeight:700,color:T.text,marginBottom:8}}>No trips yet!</div>
+      <div style={{fontSize:15,color:T.muted}}>Go to Admin → Trips to add your first adventure.</div>
+    </div>
+  );
+  const [next,...rest] = upcoming;
   return (
-    <div style={{ paddingBottom:T.navH+16, background:T.bg, minHeight:"100vh" }}>
-      <div style={{ padding:"16px 16px 12px" }}>
-        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:26, fontWeight:700, color:T.text }}>✈️ Family Trips</div>
-        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, color:T.muted }}>{upcoming.length} upcoming · {past.length} completed</div>
+    <div style={{paddingBottom:T.navH+16,background:T.bg,minHeight:"100vh"}}>
+      <div style={{padding:"16px 16px 12px"}}>
+        <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:26,fontWeight:700,color:T.text}}>✈️ Family Trips</div>
+        <div style={{fontFamily:"'Nunito',sans-serif",fontSize:13,color:T.muted}}>{upcoming.length} upcoming · {past.length} completed</div>
       </div>
-      {next && (() => {
-        const days = tripDaysAway(next.startDate);
-        const nights = tripNights(next.startDate, next.endDate);
-        const members = (next.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
+      {next&&(()=>{
+        const days=tripDaysAway(next.startDate), nights=tripNights(next.startDate,next.endDate);
+        const members=(next.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
         return (
-          <div style={{ margin:"0 12px 16px", borderRadius:24, overflow:"hidden", position:"relative", height:320, boxShadow:"0 8px 32px rgba(0,0,0,0.2)" }}>
-            <div style={{ position:"absolute", inset:0, backgroundImage:`url(${tripImageUrl(next)})`, backgroundSize:"cover", backgroundPosition:"center" }} />
-            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.85) 100%)" }} />
-            <div style={{ position:"absolute", top:0, left:0, right:0, zIndex:2, padding:"16px 18px", display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-              <div style={{ background:"rgba(255,255,255,0.22)", backdropFilter:"blur(6px)", borderRadius:99, padding:"5px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color:"#fff", letterSpacing:1 }}>NEXT UP</div>
-              {days !== null && days >= 0 && <div style={{ textAlign:"center", background:"rgba(0,0,0,0.35)", backdropFilter:"blur(8px)", borderRadius:16, padding:"10px 16px", border:"1px solid rgba(255,255,255,0.2)" }}><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:52, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div><div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.9)", letterSpacing:1.2, textTransform:"uppercase" }}>days away</div></div>}
-              {days !== null && days < 0 && <div style={{ background:"#2D7A56", borderRadius:16, padding:"8px 14px", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:"#fff" }}>Happening now! 🎉</div>}
+          <div style={{margin:"0 12px 16px",borderRadius:24,overflow:"hidden",position:"relative",height:320,boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
+            <div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(next)})`,backgroundSize:"cover",backgroundPosition:"center"}}/>
+            <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.08) 0%,rgba(0,0,0,0.45) 55%,rgba(0,0,0,0.85) 100%)"}}/>
+            <div style={{position:"absolute",top:0,left:0,right:0,zIndex:2,padding:"16px 18px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{background:"rgba(255,255,255,0.22)",backdropFilter:"blur(6px)",borderRadius:99,padding:"5px 14px",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff",letterSpacing:1}}>NEXT UP</div>
+              {days!==null&&days>=0&&<div style={{textAlign:"center",background:"rgba(0,0,0,0.35)",backdropFilter:"blur(8px)",borderRadius:16,padding:"10px 16px",border:"1px solid rgba(255,255,255,0.2)"}}>
+                <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:52,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
+                <div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,fontWeight:700,color:"rgba(255,255,255,0.9)",letterSpacing:1.2,textTransform:"uppercase"}}>days away</div>
+              </div>}
+              {days!==null&&days<0&&<div style={{background:"#2D7A56",borderRadius:16,padding:"8px 14px",fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:"#fff"}}>Happening now! 🎉</div>}
             </div>
-            <div style={{ position:"absolute", bottom:0, left:0, right:0, zIndex:2, padding:"20px 18px" }}>
-              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:30, fontWeight:700, color:"#fff", lineHeight:1.15, textShadow:"0 2px 12px rgba(0,0,0,0.5)" }}>{next.destination}</div>
-              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:14, color:"rgba(255,255,255,0.9)", marginTop:4, marginBottom:12 }}>{formatTripDates(next.startDate, next.endDate)}{nights > 0 ? ` · ${nights} night${nights!==1?"s":""}` : ""}</div>
-              <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
-                {next.location  && <div style={{ background:"rgba(255,255,255,0.18)", backdropFilter:"blur(4px)", borderRadius:99, padding:"4px 11px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>📍 {next.location}</div>}
-                {next.tripType  && <div style={{ background:"rgba(255,255,255,0.18)", backdropFilter:"blur(4px)", borderRadius:99, padding:"4px 11px", fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:"#fff" }}>{next.tripType}</div>}
-                {members.length > 0 && <div style={{ display:"flex", gap:4, marginLeft:"auto" }}>{members.map(m => <div key={m.id} style={{ width:28, height:28, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"2px solid rgba(255,255,255,0.65)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>{m.emoji}</div>)}</div>}
+            <div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:2,padding:"20px 18px"}}>
+              <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:30,fontWeight:700,color:"#fff",lineHeight:1.15,textShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>{next.destination}</div>
+              <div style={{fontFamily:"'Nunito',sans-serif",fontSize:14,color:"rgba(255,255,255,0.9)",marginTop:4,marginBottom:12}}>{formatTripDates(next.startDate,next.endDate)}{nights>0?` · ${nights} night${nights!==1?"s":""}`:""}</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
+                {next.location&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"4px 11px",fontFamily:"'Nunito',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>📍 {next.location}</div>}
+                {next.tripType&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"4px 11px",fontFamily:"'Nunito',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>{next.tripType}</div>}
+                {members.length>0&&<div style={{display:"flex",gap:4,marginLeft:"auto"}}>{members.map(m=><div key={m.id} style={{width:28,height:28,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"2px solid rgba(255,255,255,0.65)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>{m.emoji}</div>)}</div>}
               </div>
             </div>
           </div>
         );
       })()}
-      {rest.length > 0 && (
-        <div style={{ padding:"0 12px" }}>
-          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub, marginBottom:10, letterSpacing:.6 }}>COMING UP</div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, marginBottom:16 }}>
-            {rest.map(trip => {
-              const days = tripDaysAway(trip.startDate);
-              const members = (trip.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
+      {rest.length>0&&(
+        <div style={{padding:"0 12px"}}>
+          <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:T.sub,marginBottom:10,letterSpacing:.6}}>COMING UP</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+            {rest.map(trip=>{
+              const days=tripDaysAway(trip.startDate);
+              const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
               return (
-                <div key={trip.id} style={{ borderRadius:16, overflow:"hidden", position:"relative", aspectRatio:"1 / 1", boxShadow:"0 3px 12px rgba(0,0,0,0.15)" }}>
-                  <div style={{ position:"absolute", inset:0, backgroundImage:`url(${tripImageUrl(trip)})`, backgroundSize:"cover", backgroundPosition:"center" }} />
-                  <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(0,0,0,0.05) 0%, rgba(0,0,0,0.68) 100%)" }} />
-                  <div style={{ position:"absolute", inset:0, zIndex:2, padding:"8px", display:"flex", flexDirection:"column", justifyContent:"space-between" }}>
-                    {days !== null && days >= 0 && <div style={{ alignSelf:"flex-end", background:"rgba(0,0,0,0.4)", backdropFilter:"blur(4px)", borderRadius:10, padding:"3px 7px", textAlign:"center", border:"1px solid rgba(255,255,255,0.15)" }}><div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:18, fontWeight:700, color:"#fff", lineHeight:1 }}>{days}</div><div style={{ fontFamily:"'Nunito',sans-serif", fontSize:8, fontWeight:700, color:"rgba(255,255,255,0.85)", letterSpacing:.8, textTransform:"uppercase" }}>days</div></div>}
+                <div key={trip.id} style={{borderRadius:16,overflow:"hidden",position:"relative",aspectRatio:"1/1",boxShadow:"0 3px 12px rgba(0,0,0,0.15)"}}>
+                  <div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center"}}/>
+                  <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.05) 0%,rgba(0,0,0,0.68) 100%)"}}/>
+                  <div style={{position:"absolute",inset:0,zIndex:2,padding:"8px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
+                    {days!==null&&days>=0&&<div style={{alignSelf:"flex-end",background:"rgba(0,0,0,0.4)",backdropFilter:"blur(4px)",borderRadius:10,padding:"3px 7px",textAlign:"center",border:"1px solid rgba(255,255,255,0.15)"}}>
+                      <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:18,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
+                      <div style={{fontFamily:"'Nunito',sans-serif",fontSize:8,fontWeight:700,color:"rgba(255,255,255,0.85)",letterSpacing:.8,textTransform:"uppercase"}}>days</div>
+                    </div>}
                     <div>
-                      <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:"#fff", lineHeight:1.2, textShadow:"0 1px 6px rgba(0,0,0,0.6)" }}>{trip.destination}</div>
-                      <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, color:"rgba(255,255,255,0.85)", marginTop:2 }}>{formatTripDates(trip.startDate, trip.endDate)}</div>
-                      {members.length > 0 && <div style={{ display:"flex", gap:2, marginTop:5 }}>{members.map(m => <div key={m.id} style={{ width:18, height:18, borderRadius:"50%", background:"rgba(255,255,255,0.2)", border:"1.5px solid rgba(255,255,255,0.65)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:10 }}>{m.emoji}</div>)}</div>}
+                      <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:"#fff",lineHeight:1.2,textShadow:"0 1px 6px rgba(0,0,0,0.6)"}}>{trip.destination}</div>
+                      <div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,color:"rgba(255,255,255,0.85)",marginTop:2}}>{formatTripDates(trip.startDate,trip.endDate)}</div>
+                      {members.length>0&&<div style={{display:"flex",gap:2,marginTop:5}}>{members.map(m=><div key={m.id} style={{width:18,height:18,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"1.5px solid rgba(255,255,255,0.65)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>{m.emoji}</div>)}</div>}
                     </div>
                   </div>
                 </div>
@@ -2643,19 +2565,19 @@ function TripsPage({ trips, family }) {
           </div>
         </div>
       )}
-      {past.length > 0 && (
-        <div style={{ padding:"0 12px" }}>
-          <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.muted, marginBottom:10, letterSpacing:.6 }}>MEMORIES</div>
-          {[...past].reverse().map(trip => {
-            const nights = tripNights(trip.startDate, trip.endDate);
-            const members = (trip.memberIds||[]).map(id => memberMap[id]).filter(Boolean);
+      {past.length>0&&(
+        <div style={{padding:"0 12px"}}>
+          <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:T.muted,marginBottom:10,letterSpacing:.6}}>MEMORIES</div>
+          {[...past].reverse().map(trip=>{
+            const nights=tripNights(trip.startDate,trip.endDate);
+            const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
             return (
-              <div key={trip.id} style={{ display:"flex", background:T.white, borderRadius:14, overflow:"hidden", marginBottom:8, border:`1.5px solid ${T.border}` }}>
-                <div style={{ width:72, flexShrink:0, backgroundImage:`url(${tripImageUrl(trip)})`, backgroundSize:"cover", backgroundPosition:"center", filter:"grayscale(35%)" }} />
-                <div style={{ padding:"10px 12px", flex:1 }}>
-                  <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, color:T.text }}>{trip.destination}</div>
-                  <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>{formatTripDates(trip.startDate, trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
-                  {members.length > 0 && <div style={{ display:"flex", gap:3, marginTop:5 }}>{members.map(m => <span key={m.id} style={{ fontSize:14 }}>{m.emoji}</span>)}</div>}
+              <div key={trip.id} style={{display:"flex",background:T.white,borderRadius:14,overflow:"hidden",marginBottom:8,border:`1.5px solid ${T.border}`}}>
+                <div style={{width:72,flexShrink:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center",filter:"grayscale(35%)"}}/>
+                <div style={{padding:"10px 12px",flex:1}}>
+                  <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:700,color:T.text}}>{trip.destination}</div>
+                  <div style={{fontFamily:"'Nunito',sans-serif",fontSize:11,color:T.muted}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
+                  {members.length>0&&<div style={{display:"flex",gap:3,marginTop:5}}>{members.map(m=><span key={m.id} style={{fontSize:14}}>{m.emoji}</span>)}</div>}
                 </div>
               </div>
             );
@@ -2666,72 +2588,74 @@ function TripsPage({ trips, family }) {
   );
 }
 function AdminTrips({ family, trips, saveTrips }) {
-  const EMPTY_TRIP = { destination:"", startDate:"", endDate:"", location:"", tripType:"", imageKeyword:"", photoUrl:"", memberIds:[] };
-  const [form, setForm] = useState(EMPTY_TRIP);
+  const ET = { destination:"", startDate:"", endDate:"", location:"", tripType:"", imageKeyword:"", photoUrl:"", memberIds:[] };
+  const [form, setForm] = useState(ET);
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
-  function startEdit(trip) { setForm({ ...EMPTY_TRIP, ...trip }); setEditingId(trip.id); setShowForm(true); window.scrollTo({ top:0, behavior:"smooth" }); }
-  function cancelForm() { setForm(EMPTY_TRIP); setEditingId(null); setShowForm(false); }
+  function startEdit(trip) { setForm({...ET,...trip}); setEditingId(trip.id); setShowForm(true); window.scrollTo({top:0,behavior:"smooth"}); }
+  function cancelForm() { setForm(ET); setEditingId(null); setShowForm(false); }
   async function saveTripForm() {
-    if (!form.destination || !form.startDate) { alert("Please enter a destination and start date."); return; }
+    if (!form.destination||!form.startDate) { alert("Please enter a destination and start date."); return; }
     setSaving(true);
-    const next = editingId
-      ? (trips||[]).map(t => t.id === editingId ? { ...form, id:editingId } : t)
-      : [...(trips||[]), { ...form, id: Date.now().toString() }];
-    await saveTrips(next);
-    setSaving(false);
-    cancelForm();
+    const next = editingId ? (trips||[]).map(t=>t.id===editingId?{...form,id:editingId}:t) : [...(trips||[]),{...form,id:Date.now().toString()}];
+    await saveTrips(next); setSaving(false); cancelForm();
   }
-  async function deleteTrip(id) {
-    if (!window.confirm("Remove this trip?")) return;
-    await saveTrips((trips||[]).filter(t => t.id !== id));
-  }
-  const TYPE_OPTIONS = ["🏖️ Beach","🏔️ Mountains","🏙️ City","🎿 Ski","🌲 National Park","🚢 Cruise","🌍 International","🎡 Theme Park","🏕️ Camping","👨‍👩‍👧‍👦 Family Visit"];
-  const sorted = [...(trips||[])].sort((a,b) => (a.startDate||"").localeCompare(b.startDate||""));
+  async function deleteTrip(id) { if (!window.confirm("Remove this trip?")) return; await saveTrips((trips||[]).filter(t=>t.id!==id)); }
+  const TYPES = ["🏖️ Beach","🏔️ Mountains","🏙️ City","🎿 Ski","🌲 National Park","🚢 Cruise","🌍 International","🎡 Theme Park","🏕️ Camping","👨‍👩‍👧‍👦 Family Visit"];
+  const sorted = [...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
+  const F = (lbl,children) => <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>{lbl}</label>{children}</div>;
+  const inp = (field,placeholder,type="text") => <input type={type} value={form[field]} onChange={e=>setForm(f=>({...f,[field]:e.target.value}))} placeholder={placeholder} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box"}}/>;
   return (
     <div>
-      <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>✈️ Trips</h2>
-      <p style={{ fontSize:13, color:T.muted, margin:"0 0 18px", fontFamily:"'Nunito',sans-serif" }}>Add your family trips. Each shows on the Trips page with a photo, countdown, and who's going.</p>
-      {showForm && (
-        <div style={{ background:T.white, borderRadius:16, border:`2px solid ${editingId?"#3B6FA0":T.border}`, padding:"18px 20px", marginBottom:20 }}>
-          <h3 style={{ fontSize:17, fontWeight:700, color:editingId?"#3B6FA0":T.text, margin:"0 0 16px" }}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
-          <div style={{ marginBottom:12 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Destination *</label><input value={form.destination} onChange={e=>setForm(f=>({...f,destination:e.target.value}))} placeholder="e.g. Outer Banks, Yellowstone" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:15, boxSizing:"border-box" }} /></div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
-            <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Date *</label><input type="date" value={form.startDate} onChange={e=>setForm(f=>({...f,startDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
-            <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>End Date</label><input type="date" value={form.endDate} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
-            <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Location / State</label><input value={form.location} onChange={e=>setForm(f=>({...f,location:e.target.value}))} placeholder="e.g. North Carolina" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
-            <div><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Trip Type</label><select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box", background:T.white }}><option value="">Select type…</option>{TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+      <h2 style={{fontSize:22,fontWeight:700,color:T.text,margin:"0 0 6px"}}>✈️ Trips</h2>
+      <p style={{fontSize:13,color:T.muted,margin:"0 0 18px",fontFamily:"'Nunito',sans-serif"}}>Add your family trips. Each shows on the Trips page with a photo, countdown, and who's going.</p>
+      {showForm&&(
+        <div style={{background:T.white,borderRadius:16,border:`2px solid ${editingId?"#3B6FA0":T.border}`,padding:"18px 20px",marginBottom:20}}>
+          <h3 style={{fontSize:17,fontWeight:700,color:editingId?"#3B6FA0":T.text,margin:"0 0 16px"}}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
+          {F("Destination *", inp("destination","e.g. Outer Banks, Yellowstone"))}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+            <div>{F("Start Date *", inp("startDate","","date"))}</div>
+            <div>{F("End Date",     inp("endDate","","date"))}</div>
+            <div>{F("Location / State", inp("location","e.g. North Carolina"))}</div>
+            <div>
+              <label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Trip Type</label>
+              <select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}>
+                <option value="">Select type…</option>{TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
           </div>
-          <div style={{ marginBottom:12 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Photo Keyword <span style={{ fontWeight:400, color:T.muted }}>(auto-finds a background photo)</span></label><input value={form.imageKeyword} onChange={e=>setForm(f=>({...f,imageKeyword:e.target.value}))} placeholder="e.g. outer banks beach, yellowstone bison" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }} /></div>
-          <div style={{ marginBottom:16 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Custom Photo URL <span style={{ fontWeight:400, color:T.muted }}>(optional — overrides keyword)</span></label><input value={form.photoUrl} onChange={e=>setForm(f=>({...f,photoUrl:e.target.value}))} placeholder="https://your-photo-url.jpg" style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:13, boxSizing:"border-box" }} /></div>
-          <div style={{ marginBottom:16 }}><label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:8 }}>Who's Going?</label><div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>{family.map(m => { const on=(form.memberIds||[]).includes(m.id); return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", borderRadius:99, border:`2px solid ${on?m.color:T.border}`, background:on?m.color:"transparent", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:on?"#fff":T.sub }}>{m.emoji} {m.name}</button>; })}</div></div>
-          <div style={{ display:"flex", gap:10 }}>
-            <button onClick={saveTripForm} disabled={saving} style={{ flex:1, padding:"12px", borderRadius:12, background:editingId?"#3B6FA0":T.text, color:"#fff", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, cursor:"pointer" }}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
-            <button onClick={cancelForm} style={{ padding:"12px 20px", borderRadius:12, background:T.stone, color:T.sub, border:"none", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:14 }}>Cancel</button>
+          {F("Photo Keyword (auto-finds background photo)", inp("imageKeyword","e.g. outer banks beach, yellowstone"))}
+          {F("Custom Photo URL (optional — overrides keyword)", inp("photoUrl","https://your-photo.jpg"))}
+          <div style={{marginBottom:16}}>
+            <label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:8}}>Who's Going?</label>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{family.map(m=>{const on=(form.memberIds||[]).includes(m.id);return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,border:`2px solid ${on?m.color:T.border}`,background:on?m.color:"transparent",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:on?"#fff":T.sub}}>{m.emoji} {m.name}</button>;})}</div>
+          </div>
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={saveTripForm} disabled={saving} style={{flex:1,padding:"12px",borderRadius:12,background:editingId?"#3B6FA0":T.text,color:"#fff",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
+            <button onClick={cancelForm} style={{padding:"12px 20px",borderRadius:12,background:T.stone,color:T.sub,border:"none",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:14}}>Cancel</button>
           </div>
         </div>
       )}
-      {!showForm && <button onClick={()=>{setEditingId(null);setForm(EMPTY_TRIP);setShowForm(true);}} style={{ display:"flex", alignItems:"center", gap:8, padding:"12px 20px", borderRadius:14, background:T.stone, border:`2px dashed ${T.border}`, cursor:"pointer", width:"100%", marginBottom:20, boxSizing:"border-box" }}><span style={{ fontSize:20, color:T.muted }}>+</span><span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:600, color:T.sub }}>Add a trip</span></button>}
-      {sorted.length===0 && !showForm && <div style={{ textAlign:"center", padding:"32px", color:T.muted, fontFamily:"'Nunito',sans-serif" }}>No trips yet. Tap above to plan your first adventure!</div>}
-      {sorted.map(trip => {
-        const days = tripDaysAway(trip.startDate);
-        const nights = tripNights(trip.startDate, trip.endDate);
+      {!showForm&&<button onClick={()=>{setEditingId(null);setForm(ET);setShowForm(true);}} style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderRadius:14,background:T.stone,border:`2px dashed ${T.border}`,cursor:"pointer",width:"100%",marginBottom:20,boxSizing:"border-box"}}><span style={{fontSize:20,color:T.muted}}>+</span><span style={{fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:600,color:T.sub}}>Add a trip</span></button>}
+      {!sorted.length&&!showForm&&<div style={{textAlign:"center",padding:"32px",color:T.muted,fontFamily:"'Nunito',sans-serif"}}>No trips yet. Tap above to plan your first adventure!</div>}
+      {sorted.map(trip=>{
+        const days=tripDaysAway(trip.startDate), nights=tripNights(trip.startDate,trip.endDate);
         return (
-          <div key={trip.id} style={{ background:T.white, borderRadius:16, border:`1.5px solid ${T.border}`, marginBottom:10, overflow:"hidden" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px" }}>
-              <div style={{ flex:1 }}>
-                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:17, fontWeight:700, color:T.text }}>{trip.destination}</div>
-                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted, marginTop:2 }}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
-                {trip.location && <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.sub, marginTop:2 }}>📍 {trip.location}</div>}
-                <div style={{ display:"flex", gap:4, marginTop:6 }}>{(trip.memberIds||[]).map(id=>{const m=family.find(x=>x.id===id);return m?<span key={id} style={{fontSize:16}}>{m.emoji}</span>:null;})}</div>
+          <div key={trip.id} style={{background:T.white,borderRadius:16,border:`1.5px solid ${T.border}`,marginBottom:10,overflow:"hidden"}}>
+            <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px"}}>
+              <div style={{flex:1}}>
+                <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:17,fontWeight:700,color:T.text}}>{trip.destination}</div>
+                <div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted,marginTop:2}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
+                {trip.location&&<div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.sub,marginTop:2}}>📍 {trip.location}</div>}
+                <div style={{display:"flex",gap:4,marginTop:6}}>{(trip.memberIds||[]).map(id=>{const m=family.find(x=>x.id===id);return m?<span key={id} style={{fontSize:16}}>{m.emoji}</span>:null;})}</div>
               </div>
-              <div style={{ textAlign:"center", minWidth:44 }}>
+              <div style={{textAlign:"center",minWidth:44}}>
                 {days===null?null:days<0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:T.muted}}>Past</div>:days===0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:"#2D7A56",fontWeight:700}}>Today!</div>:<><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:22,fontWeight:700,color:T.text,lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,color:T.muted}}>days</div></>}
               </div>
-              <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                <button onClick={()=>startEdit(trip)} style={{ padding:"6px 12px", borderRadius:8, background:"#D6E8F7", color:"#3B6FA0", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Edit</button>
-                <button onClick={()=>deleteTrip(trip.id)} style={{ padding:"6px 12px", borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:600, cursor:"pointer" }}>Remove</button>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                <button onClick={()=>startEdit(trip)} style={{padding:"6px 12px",borderRadius:8,background:"#D6E8F7",color:"#3B6FA0",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Edit</button>
+                <button onClick={()=>deleteTrip(trip.id)} style={{padding:"6px 12px",borderRadius:8,background:"#FEE2E2",color:"#DC2626",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Remove</button>
               </div>
             </div>
           </div>
@@ -2751,6 +2675,7 @@ function AppInner() {
 
   const [events,           setEvents]           = useState([]);
   const [choreAssignments, setChoreAssignments] = useState({});
+  const [customChores,     setCustomChores]     = useState({});
   const [trips,            setTrips]            = useState([]);
   const [tasks,            setTasks]            = useState(INIT_TASKS);
   const [goals,            setGoals]            = useState(INIT_GOALS);
@@ -2812,10 +2737,24 @@ function AppInner() {
           if (local) setScreensaverMsg(local);
         } catch {}
       }
+      // Load custom chores from Supabase (synced across all devices)
+      const choreSettingRows = await SB.getSetting("custom_chores").catch(() => []);
+      if (choreSettingRows && choreSettingRows[0] && choreSettingRows[0].value) {
+        try { setCustomChores(JSON.parse(choreSettingRows[0].value)); } catch {}
+      } else {
+        // One-time migration from localStorage
+        try {
+          const local = localStorage.getItem("familyos_customChores");
+          if (local) { setCustomChores(JSON.parse(local)); SB.upsertSetting("custom_chores", local).catch(()=>{}); }
+        } catch {}
+      }
+
+      // Load trips
       const tripRows = await SB.getSetting("family_trips").catch(() => []);
       if (tripRows && tripRows[0] && tripRows[0].value) {
         try { setTrips(JSON.parse(tripRows[0].value)); } catch {}
       }
+
       const allCompRows = await sb("task_completions", "GET", null,
         `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
       ).catch(() => []);
@@ -2824,6 +2763,12 @@ function AppInner() {
       console.error("Load error:", e);
     }
     setLoading(false);
+  }
+
+  async function saveCustomChores(next) {
+    setCustomChores(next);
+    try { await SB.upsertSetting("custom_chores", JSON.stringify(next)); }
+    catch(e) { console.error("saveCustomChores error:", e); }
   }
 
   async function saveTrips(next) {
@@ -2978,6 +2923,7 @@ function AppInner() {
     family={family} events={events} setEvents={setEvents}
     tasks={tasks} setTasks={setTasks} goals={goals} setGoals={setGoals}
     choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments}
+    customChores={customChores} saveCustomChores={saveCustomChores}
     trips={trips} saveTrips={saveTrips}
     dbTaskRows={dbTaskRows} dbGoalRows={dbGoalRows} onReload={loadAll}
     screensaverMsg={screensaverMsg} setScreensaverMsg={setScreensaverMsg}
@@ -2989,7 +2935,7 @@ function AppInner() {
       <TopBar onAdmin={goAdmin} />
       {page==="trips"    && <TripsPage    trips={trips} family={family} />}
       {page==="calendar" && <CalendarPage family={family} events={events} />}
-      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments}
+      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores}
         onRainbowDay={(memberId, dateStr) => {
           SB.logRainbowDay(memberId, dateStr);
           SB.getRainbowDays().then(r => setRainbowDays(r||[]));
