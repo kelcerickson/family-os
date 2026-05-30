@@ -572,13 +572,7 @@ function CalendarPage({ family, events }) {
     const matchesDow = ev.dows ? ev.dows.includes(dow) : ev.dow === dow;
     if (ev.recurrence === "daily") return true;
     if (ev.recurrence === "weekly") return matchesDow;
-    if (ev.recurrence === "monthly") {
-      if (!matchesDow) return false;
-      const rawNeg = ev.dows ? ev.dows.find(d => d < 0) : null;
-      const weekNum = rawNeg ? Math.abs(rawNeg) : 1;
-      if (weekNum === 5) { const nw = new Date(date); nw.setDate(date.getDate()+7); return nw.getMonth() !== date.getMonth(); }
-      return Math.ceil(date.getDate() / 7) === weekNum;
-    }
+    if (ev.recurrence === "monthly") { if (!matchesDow) return false; const rn=ev.dows?ev.dows.find(d=>d<0):null; const wn=rn?Math.abs(rn):1; if (wn===5){const nw=new Date(date);nw.setDate(date.getDate()+7);return nw.getMonth()!==date.getMonth();} return Math.ceil(date.getDate()/7)===wn; }
     if (ev.recurrence === "once" && ev.specificDate) {
       // Compare date strings directly to avoid timezone issues
       const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
@@ -1282,35 +1276,35 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
   }
 
   const streak  = streaks[activeMember.id]  || 0;
-  function ds(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-  function computePtsForMember(memberId, fromStr, toStr) {
-    const memberComps = (allCompletions||[]).filter(c => c.member_id === memberId && c.completed_date >= fromStr && c.completed_date <= toStr);
-    if (!memberComps.length) return 0;
-    const byDate = {};
-    memberComps.forEach(c => { if (!byDate[c.completed_date]) byDate[c.completed_date] = []; byDate[c.completed_date].push(c.task_label); });
-    const mt = tasks[memberId] || {};
-    const bonusMap = new Map((mt.bonus||[]).map(t => [t.label, t.bonusPoints||1]));
-    const allKnown = new Set([...(mt.learn||[]),...(mt.exercise||[]),...(mt.goals||[]),...(mt.bonus||[]),...(mt.open||[])].map(t=>t.label));
-    let total = 0;
-    Object.entries(byDate).forEach(([dateStr, labels]) => {
-      const dow = new Date(dateStr+"T00:00:00").getDay();
-      function done(list) { const active=(list||[]).filter(t=>!t.recurrence||t.recurrence==="daily"||(t.recurrence==="weekly"&&(t.dows||[]).includes(dow))||(t.recurrence==="once"&&t.specificDate===dateStr)); return active.length>0&&active.every(t=>labels.includes(t.label)); }
-      if (done(mt.learn))     total += 1;
-      if (done(mt.exercise))  total += 1;
-      if (done(mt.goals))     total += 1;
-      if (labels.some(l => !allKnown.has(l))) total += 1; // any chore = contribute pt
-      labels.forEach(l => { if (bonusMap.has(l)) total += bonusMap.get(l); });
+  function ds(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;}
+  function computePtsForMember(memberId,fromStr,toStr){
+    const mc=(allCompletions||[]).filter(c=>c.member_id===memberId&&c.completed_date>=fromStr&&c.completed_date<=toStr);
+    if(!mc.length)return 0;
+    const byDate={};
+    mc.forEach(c=>{if(!byDate[c.completed_date])byDate[c.completed_date]=[];byDate[c.completed_date].push(c.task_label);});
+    const mt=tasks[memberId]||{};
+    const bm=new Map((mt.bonus||[]).map(t=>[t.label,t.bonusPoints||1]));
+    const ak=new Set([...(mt.learn||[]),...(mt.exercise||[]),...(mt.goals||[]),...(mt.bonus||[]),...(mt.open||[])].map(t=>t.label));
+    let total=0;
+    Object.entries(byDate).forEach(([ds,labels])=>{
+      const dow=new Date(ds+"T00:00:00").getDay();
+      function done(list){const a=(list||[]).filter(t=>!t.recurrence||t.recurrence==="daily"||(t.recurrence==="weekly"&&(t.dows||[]).includes(dow))||(t.recurrence==="once"&&t.specificDate===ds));return a.length>0&&a.every(t=>labels.includes(t.label));}
+      if(done(mt.learn))total+=1;
+      if(done(mt.exercise))total+=1;
+      if(done(mt.goals))total+=1;
+      if(labels.some(l=>!ak.has(l)))total+=1;
+      labels.forEach(l=>{if(bm.has(l))total+=bm.get(l);});
     });
     return total;
   }
-  const todayD = getMountainToday(); const todayS = ds(todayD);
-  const sunD = new Date(todayD); sunD.setDate(todayD.getDate()-todayD.getDay());
-  const satD = new Date(sunD); satD.setDate(sunD.getDate()+6);
-  const lSunD = new Date(sunD); lSunD.setDate(sunD.getDate()-7);
-  const lSatD = new Date(lSunD); lSatD.setDate(lSunD.getDate()+6);
-  const todayPts    = computePtsForMember(activeMember.id, todayS, todayS);
-  const wPts        = computePtsForMember(activeMember.id, ds(sunD), ds(satD));
-  const lastWeekPts = computePtsForMember(activeMember.id, ds(lSunD), ds(lSatD));
+  const todayD=getMountainToday(),todayS=ds(todayD);
+  const sunD=new Date(todayD);sunD.setDate(todayD.getDate()-todayD.getDay());
+  const satD=new Date(sunD);satD.setDate(sunD.getDate()+6);
+  const lSunD=new Date(sunD);lSunD.setDate(sunD.getDate()-7);
+  const lSatD=new Date(lSunD);lSatD.setDate(lSunD.getDate()+6);
+  const todayPts=computePtsForMember(activeMember.id,todayS,todayS);
+  const wPts=computePtsForMember(activeMember.id,ds(sunD),ds(satD));
+  const lastWeekPts=computePtsForMember(activeMember.id,ds(lSunD),ds(lSatD));
   const earnedBadges = getEarnedBadges(activeMember.id);
 
   return (
@@ -1595,14 +1589,10 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
   function recurrenceLabel(ev) {
     if (ev.recurrence === "once") return `Once · ${ev.specificDate}`;
     if (ev.recurrence === "daily") return "Every day";
-    const positiveDows = ev.dows ? ev.dows.filter(i => i >= 0) : [];
-    const days = positiveDows.length > 0 ? positiveDows.map(i => (DOW_LABELS[i]||"").slice(0,3)).join(", ") : (ev.dow !== undefined ? (DOW_LABELS[ev.dow]||"") : "");
+    const pd = ev.dows ? ev.dows.filter(i=>i>=0) : [];
+    const days = pd.length>0 ? pd.map(i=>(DOW_LABELS[i]||"").slice(0,3)).join(", ") : (ev.dow!==undefined?(DOW_LABELS[ev.dow]||""):"");
     if (ev.recurrence === "weekly") return `Every ${days}`;
-    if (ev.recurrence === "monthly") {
-      const weekNum = ev.dows ? Math.abs(ev.dows.find(i => i < 0) || -1) : 1;
-      const occLabel = ["1st","2nd","3rd","4th","Last"][weekNum-1] || "1st";
-      return `Monthly · ${occLabel} ${days}`;
-    }
+    if (ev.recurrence === "monthly") { const wn=ev.dows?Math.abs(ev.dows.find(i=>i<0)||-1):1; return `Monthly · ${(["1st","2nd","3rd","4th","Last"][wn-1]||"1st")} ${days}`; }
     return ev.recurrence;
   }
 
@@ -1895,8 +1885,6 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
   const [addingChore, setAddingChore] = useState(false);
   const [newChoreName, setNewChoreName] = useState("");
 
-  // customChores + saveCustomChores are Supabase-backed (passed from AppInner)
-
   function getChorelist(freqId, dow) {
     const base = freqId === "weekly"
       ? (WEEKLY_CHORES[dow] || [])
@@ -1929,9 +1917,8 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
     const key = freqId === "weekly" ? `weekly_${dow}` : freqId;
     const cc = customChores || {};
     const custom = cc[key] || [];
-    const base = freqId === "weekly" ? (WEEKLY_CHORES[dow]||[]) : (FREQ_GROUPS.find(f=>f.id===freqId)?.chores||[]);
-    const existingIdx = custom.indexOf(oldLabel);
     let next = { ...cc };
+    const existingIdx = custom.indexOf(oldLabel);
     if (existingIdx >= 0) {
       next = { ...next, [key]: custom.map((c,i) => i===existingIdx ? trimmed : c) };
     } else {
@@ -1941,11 +1928,7 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
     }
     setChoreAssignments(prev => {
       const updated = { ...prev };
-      if (updated[oldLabel] !== undefined) {
-        updated[trimmed] = updated[oldLabel];
-        delete updated[oldLabel];
-        SB.upsertChore(trimmed, updated[trimmed]);
-      }
+      if (updated[oldLabel] !== undefined) { updated[trimmed] = updated[oldLabel]; delete updated[oldLabel]; SB.upsertChore(trimmed, updated[trimmed]); }
       return updated;
     });
     saveCustomChores(next);
@@ -1963,8 +1946,7 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
     if (custom.includes(label)) next = { ...next, [key]: custom.filter(c => c !== label) };
     if (renameEntry) {
       const nr = { ...renames }; delete nr[renameEntry[0]];
-      const origLabel = renameEntry[0].slice((key+"|").length);
-      next = { ...next, _renames: nr, _hidden: [...(cc._hidden||[]), key+"|"+origLabel] };
+      next = { ...next, _renames: nr, _hidden: [...(cc._hidden||[]), key+"|"+renameEntry[0].slice((key+"|").length)] };
     } else if (base.includes(label)) {
       next = { ...next, _hidden: [...(cc._hidden||[]), key+"|"+label] };
     }
@@ -2473,8 +2455,7 @@ function AdminGoals({ family, goals, setGoals, dbGoalRows }) {
 
 function tripDaysAway(dateStr) {
   if (!dateStr) return null;
-  const today = getMountainToday();
-  return Math.ceil((new Date(dateStr+"T00:00:00") - today) / (1000*60*60*24));
+  return Math.ceil((new Date(dateStr+"T00:00:00") - getMountainToday()) / (1000*60*60*24));
 }
 function formatTripDates(s, e) {
   if (!s) return "";
@@ -2490,12 +2471,14 @@ function tripImageUrl(trip) {
   if (trip.photoUrl) return trip.photoUrl;
   return `https://source.unsplash.com/featured/800x600?${encodeURIComponent(trip.imageKeyword||trip.destination||"travel")}`;
 }
+
 function TripsPage({ trips, family }) {
   const memberMap = Object.fromEntries(family.map(m=>[m.id,m]));
   const today = getMountainToday();
   const sorted = [...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
   const upcoming = sorted.filter(t=>!t.startDate||new Date(t.startDate+"T00:00:00")>=today);
   const past     = sorted.filter(t=> t.startDate&&new Date(t.startDate+"T00:00:00")<today);
+
   if (!sorted.length) return (
     <div style={{padding:"80px 24px",textAlign:"center",fontFamily:"'Fredoka',sans-serif"}}>
       <div style={{fontSize:64,marginBottom:16}}>✈️</div>
@@ -2503,60 +2486,76 @@ function TripsPage({ trips, family }) {
       <div style={{fontSize:15,color:T.muted}}>Go to Admin → Trips to add your first adventure.</div>
     </div>
   );
+
   const [next,...rest] = upcoming;
+
   return (
     <div style={{paddingBottom:T.navH+16,background:T.bg,minHeight:"100vh"}}>
-      <div style={{padding:"16px 16px 12px"}}>
-        <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:26,fontWeight:700,color:T.text}}>✈️ Family Trips</div>
-        <div style={{fontFamily:"'Nunito',sans-serif",fontSize:13,color:T.muted}}>{upcoming.length} upcoming · {past.length} completed</div>
+      <div style={{padding:"14px 12px 10px"}}>
+        <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:24,fontWeight:700,color:T.text}}>✈️ Family Trips</div>
+        <div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted}}>{upcoming.length} upcoming · {past.length} completed</div>
       </div>
+
+      {/* BIG hero card — next trip */}
       {next&&(()=>{
         const days=tripDaysAway(next.startDate), nights=tripNights(next.startDate,next.endDate);
         const members=(next.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
         return (
-          <div style={{margin:"0 12px 16px",borderRadius:24,overflow:"hidden",position:"relative",height:320,boxShadow:"0 8px 32px rgba(0,0,0,0.2)"}}>
+          <div style={{margin:"0 10px 12px",borderRadius:22,overflow:"hidden",position:"relative",height:300,boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}>
             <div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(next)})`,backgroundSize:"cover",backgroundPosition:"center"}}/>
             <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.08) 0%,rgba(0,0,0,0.45) 55%,rgba(0,0,0,0.85) 100%)"}}/>
-            <div style={{position:"absolute",top:0,left:0,right:0,zIndex:2,padding:"16px 18px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-              <div style={{background:"rgba(255,255,255,0.22)",backdropFilter:"blur(6px)",borderRadius:99,padding:"5px 14px",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff",letterSpacing:1}}>NEXT UP</div>
-              {days!==null&&days>=0&&<div style={{textAlign:"center",background:"rgba(0,0,0,0.35)",backdropFilter:"blur(8px)",borderRadius:16,padding:"10px 16px",border:"1px solid rgba(255,255,255,0.2)"}}>
-                <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:52,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
-                <div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,fontWeight:700,color:"rgba(255,255,255,0.9)",letterSpacing:1.2,textTransform:"uppercase"}}>days away</div>
-              </div>}
-              {days!==null&&days<0&&<div style={{background:"#2D7A56",borderRadius:16,padding:"8px 14px",fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:"#fff"}}>Happening now! 🎉</div>}
+            <div style={{position:"absolute",top:0,left:0,right:0,zIndex:2,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+              <div style={{background:"rgba(255,255,255,0.22)",backdropFilter:"blur(6px)",borderRadius:99,padding:"4px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:11,fontWeight:700,color:"#fff",letterSpacing:1}}>NEXT UP</div>
+              {days!==null&&days>=0&&(
+                <div style={{textAlign:"center",background:"rgba(0,0,0,0.35)",backdropFilter:"blur(8px)",borderRadius:14,padding:"8px 14px",border:"1px solid rgba(255,255,255,0.2)"}}>
+                  <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:44,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
+                  <div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,fontWeight:700,color:"rgba(255,255,255,0.9)",letterSpacing:1.2,textTransform:"uppercase"}}>days away</div>
+                </div>
+              )}
+              {days!==null&&days<0&&<div style={{background:"#2D7A56",borderRadius:14,padding:"7px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>Happening now! 🎉</div>}
             </div>
-            <div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:2,padding:"20px 18px"}}>
-              <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:30,fontWeight:700,color:"#fff",lineHeight:1.15,textShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>{next.destination}</div>
-              <div style={{fontFamily:"'Nunito',sans-serif",fontSize:14,color:"rgba(255,255,255,0.9)",marginTop:4,marginBottom:12}}>{formatTripDates(next.startDate,next.endDate)}{nights>0?` · ${nights} night${nights!==1?"s":""}`:""}</div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center"}}>
-                {next.location&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"4px 11px",fontFamily:"'Nunito',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>📍 {next.location}</div>}
-                {next.tripType&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"4px 11px",fontFamily:"'Nunito',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>{next.tripType}</div>}
-                {members.length>0&&<div style={{display:"flex",gap:4,marginLeft:"auto"}}>{members.map(m=><div key={m.id} style={{width:28,height:28,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"2px solid rgba(255,255,255,0.65)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15}}>{m.emoji}</div>)}</div>}
+            <div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:2,padding:"16px"}}>
+              <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:28,fontWeight:700,color:"#fff",lineHeight:1.15,textShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>{next.destination}</div>
+              <div style={{fontFamily:"'Nunito',sans-serif",fontSize:13,color:"rgba(255,255,255,0.9)",marginTop:3,marginBottom:10}}>{formatTripDates(next.startDate,next.endDate)}{nights>0?` · ${nights} night${nights!==1?"s":""}`:""}</div>
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                {next.location&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>📍 {next.location}</div>}
+                {next.tripType&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>{next.tripType}</div>}
+                {members.length>0&&<div style={{display:"flex",gap:3,marginLeft:"auto"}}>{members.map(m=><div key={m.id} style={{width:26,height:26,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"2px solid rgba(255,255,255,0.65)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>{m.emoji}</div>)}</div>}
               </div>
             </div>
           </div>
         );
       })()}
+
+      {/* Coming up — 4 per row, compact squares, max 2 rows visible */}
       {rest.length>0&&(
-        <div style={{padding:"0 12px"}}>
-          <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:T.sub,marginBottom:10,letterSpacing:.6}}>COMING UP</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+        <div style={{padding:"0 10px"}}>
+          <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.sub,marginBottom:8,letterSpacing:.6}}>COMING UP</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:12}}>
             {rest.map(trip=>{
               const days=tripDaysAway(trip.startDate);
               const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
               return (
-                <div key={trip.id} style={{borderRadius:16,overflow:"hidden",position:"relative",aspectRatio:"1/1",boxShadow:"0 3px 12px rgba(0,0,0,0.15)"}}>
+                <div key={trip.id} style={{borderRadius:12,overflow:"hidden",position:"relative",aspectRatio:"1/1",boxShadow:"0 2px 8px rgba(0,0,0,0.14)"}}>
                   <div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center"}}/>
-                  <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.05) 0%,rgba(0,0,0,0.68) 100%)"}}/>
-                  <div style={{position:"absolute",inset:0,zIndex:2,padding:"8px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
-                    {days!==null&&days>=0&&<div style={{alignSelf:"flex-end",background:"rgba(0,0,0,0.4)",backdropFilter:"blur(4px)",borderRadius:10,padding:"3px 7px",textAlign:"center",border:"1px solid rgba(255,255,255,0.15)"}}>
-                      <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:18,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
-                      <div style={{fontFamily:"'Nunito',sans-serif",fontSize:8,fontWeight:700,color:"rgba(255,255,255,0.85)",letterSpacing:.8,textTransform:"uppercase"}}>days</div>
-                    </div>}
+                  <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.0) 0%,rgba(0,0,0,0.72) 100%)"}}/>
+                  <div style={{position:"absolute",inset:0,zIndex:2,padding:"5px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
+                    {/* Countdown */}
+                    {days!==null&&days>=0&&(
+                      <div style={{alignSelf:"flex-end",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(3px)",borderRadius:7,padding:"2px 5px",textAlign:"center",border:"1px solid rgba(255,255,255,0.15)"}}>
+                        <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
+                        <div style={{fontFamily:"'Nunito',sans-serif",fontSize:7,fontWeight:700,color:"rgba(255,255,255,0.85)",letterSpacing:.6,textTransform:"uppercase"}}>days</div>
+                      </div>
+                    )}
+                    {/* Name + members */}
                     <div>
-                      <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:"#fff",lineHeight:1.2,textShadow:"0 1px 6px rgba(0,0,0,0.6)"}}>{trip.destination}</div>
-                      <div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,color:"rgba(255,255,255,0.85)",marginTop:2}}>{formatTripDates(trip.startDate,trip.endDate)}</div>
-                      {members.length>0&&<div style={{display:"flex",gap:2,marginTop:5}}>{members.map(m=><div key={m.id} style={{width:18,height:18,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"1.5px solid rgba(255,255,255,0.65)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10}}>{m.emoji}</div>)}</div>}
+                      <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff",lineHeight:1.2,textShadow:"0 1px 4px rgba(0,0,0,0.7)"}}>{trip.destination}</div>
+                      <div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,color:"rgba(255,255,255,0.85)",marginTop:1}}>{formatTripDates(trip.startDate,trip.endDate)}</div>
+                      {members.length>0&&(
+                        <div style={{display:"flex",gap:2,marginTop:3}}>
+                          {members.map(m=><div key={m.id} style={{width:14,height:14,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8}}>{m.emoji}</div>)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2565,19 +2564,21 @@ function TripsPage({ trips, family }) {
           </div>
         </div>
       )}
+
+      {/* Memories */}
       {past.length>0&&(
-        <div style={{padding:"0 12px"}}>
-          <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:T.muted,marginBottom:10,letterSpacing:.6}}>MEMORIES</div>
+        <div style={{padding:"0 10px"}}>
+          <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.muted,marginBottom:8,letterSpacing:.6}}>MEMORIES</div>
           {[...past].reverse().map(trip=>{
             const nights=tripNights(trip.startDate,trip.endDate);
             const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
             return (
-              <div key={trip.id} style={{display:"flex",background:T.white,borderRadius:14,overflow:"hidden",marginBottom:8,border:`1.5px solid ${T.border}`}}>
-                <div style={{width:72,flexShrink:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center",filter:"grayscale(35%)"}}/>
-                <div style={{padding:"10px 12px",flex:1}}>
-                  <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:700,color:T.text}}>{trip.destination}</div>
+              <div key={trip.id} style={{display:"flex",background:T.white,borderRadius:12,overflow:"hidden",marginBottom:7,border:`1.5px solid ${T.border}`}}>
+                <div style={{width:64,flexShrink:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center",filter:"grayscale(35%)"}}/>
+                <div style={{padding:"9px 10px",flex:1}}>
+                  <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:T.text}}>{trip.destination}</div>
                   <div style={{fontFamily:"'Nunito',sans-serif",fontSize:11,color:T.muted}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
-                  {members.length>0&&<div style={{display:"flex",gap:3,marginTop:5}}>{members.map(m=><span key={m.id} style={{fontSize:14}}>{m.emoji}</span>)}</div>}
+                  {members.length>0&&<div style={{display:"flex",gap:3,marginTop:4}}>{members.map(m=><span key={m.id} style={{fontSize:13}}>{m.emoji}</span>)}</div>}
                 </div>
               </div>
             );
@@ -2587,6 +2588,7 @@ function TripsPage({ trips, family }) {
     </div>
   );
 }
+
 function AdminTrips({ family, trips, saveTrips }) {
   const ET = { destination:"", startDate:"", endDate:"", location:"", tripType:"", imageKeyword:"", photoUrl:"", memberIds:[] };
   const [form, setForm] = useState(ET);
@@ -2604,8 +2606,7 @@ function AdminTrips({ family, trips, saveTrips }) {
   async function deleteTrip(id) { if (!window.confirm("Remove this trip?")) return; await saveTrips((trips||[]).filter(t=>t.id!==id)); }
   const TYPES = ["🏖️ Beach","🏔️ Mountains","🏙️ City","🎿 Ski","🌲 National Park","🚢 Cruise","🌍 International","🎡 Theme Park","🏕️ Camping","👨‍👩‍👧‍👦 Family Visit"];
   const sorted = [...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
-  const F = (lbl,children) => <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>{lbl}</label>{children}</div>;
-  const inp = (field,placeholder,type="text") => <input type={type} value={form[field]} onChange={e=>setForm(f=>({...f,[field]:e.target.value}))} placeholder={placeholder} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box"}}/>;
+  const inp = (field,ph,type="text") => <input type={type} value={form[field]} onChange={e=>setForm(f=>({...f,[field]:e.target.value}))} placeholder={ph} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}/>;
   return (
     <div>
       <h2 style={{fontSize:22,fontWeight:700,color:T.text,margin:"0 0 6px"}}>✈️ Trips</h2>
@@ -2613,20 +2614,19 @@ function AdminTrips({ family, trips, saveTrips }) {
       {showForm&&(
         <div style={{background:T.white,borderRadius:16,border:`2px solid ${editingId?"#3B6FA0":T.border}`,padding:"18px 20px",marginBottom:20}}>
           <h3 style={{fontSize:17,fontWeight:700,color:editingId?"#3B6FA0":T.text,margin:"0 0 16px"}}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
-          {F("Destination *", inp("destination","e.g. Outer Banks, Yellowstone"))}
+          <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Destination *</label>{inp("destination","e.g. Outer Banks, Yellowstone")}</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-            <div>{F("Start Date *", inp("startDate","","date"))}</div>
-            <div>{F("End Date",     inp("endDate","","date"))}</div>
-            <div>{F("Location / State", inp("location","e.g. North Carolina"))}</div>
-            <div>
-              <label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Trip Type</label>
+            <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Start Date *</label>{inp("startDate","","date")}</div>
+            <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>End Date</label>{inp("endDate","","date")}</div>
+            <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Location / State</label>{inp("location","e.g. North Carolina")}</div>
+            <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Trip Type</label>
               <select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}>
                 <option value="">Select type…</option>{TYPES.map(t=><option key={t} value={t}>{t}</option>)}
               </select>
             </div>
           </div>
-          {F("Photo Keyword (auto-finds background photo)", inp("imageKeyword","e.g. outer banks beach, yellowstone"))}
-          {F("Custom Photo URL (optional — overrides keyword)", inp("photoUrl","https://your-photo.jpg"))}
+          <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Photo Keyword <span style={{fontWeight:400,color:T.muted}}>(auto-finds background photo)</span></label>{inp("imageKeyword","e.g. outer banks beach, yellowstone bison")}</div>
+          <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Custom Photo URL <span style={{fontWeight:400,color:T.muted}}>(optional — overrides keyword)</span></label>{inp("photoUrl","https://your-photo.jpg")}</div>
           <div style={{marginBottom:16}}>
             <label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:8}}>Who's Going?</label>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{family.map(m=>{const on=(form.memberIds||[]).includes(m.id);return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,border:`2px solid ${on?m.color:T.border}`,background:on?m.color:"transparent",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:on?"#fff":T.sub}}>{m.emoji} {m.name}</button>;})}</div>
@@ -2640,7 +2640,7 @@ function AdminTrips({ family, trips, saveTrips }) {
       {!showForm&&<button onClick={()=>{setEditingId(null);setForm(ET);setShowForm(true);}} style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderRadius:14,background:T.stone,border:`2px dashed ${T.border}`,cursor:"pointer",width:"100%",marginBottom:20,boxSizing:"border-box"}}><span style={{fontSize:20,color:T.muted}}>+</span><span style={{fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:600,color:T.sub}}>Add a trip</span></button>}
       {!sorted.length&&!showForm&&<div style={{textAlign:"center",padding:"32px",color:T.muted,fontFamily:"'Nunito',sans-serif"}}>No trips yet. Tap above to plan your first adventure!</div>}
       {sorted.map(trip=>{
-        const days=tripDaysAway(trip.startDate), nights=tripNights(trip.startDate,trip.endDate);
+        const days=tripDaysAway(trip.startDate),nights=tripNights(trip.startDate,trip.endDate);
         return (
           <div key={trip.id} style={{background:T.white,borderRadius:16,border:`1.5px solid ${T.border}`,marginBottom:10,overflow:"hidden"}}>
             <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px"}}>
@@ -2737,24 +2737,16 @@ function AppInner() {
           if (local) setScreensaverMsg(local);
         } catch {}
       }
-      // Load custom chores from Supabase (synced across all devices)
       const choreSettingRows = await SB.getSetting("custom_chores").catch(() => []);
       if (choreSettingRows && choreSettingRows[0] && choreSettingRows[0].value) {
         try { setCustomChores(JSON.parse(choreSettingRows[0].value)); } catch {}
       } else {
-        // One-time migration from localStorage
-        try {
-          const local = localStorage.getItem("familyos_customChores");
-          if (local) { setCustomChores(JSON.parse(local)); SB.upsertSetting("custom_chores", local).catch(()=>{}); }
-        } catch {}
+        try { const local = localStorage.getItem("familyos_customChores"); if (local) { setCustomChores(JSON.parse(local)); SB.upsertSetting("custom_chores", local).catch(()=>{}); } } catch {}
       }
-
-      // Load trips
       const tripRows = await SB.getSetting("family_trips").catch(() => []);
       if (tripRows && tripRows[0] && tripRows[0].value) {
         try { setTrips(JSON.parse(tripRows[0].value)); } catch {}
       }
-
       const allCompRows = await sb("task_completions", "GET", null,
         `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
       ).catch(() => []);
