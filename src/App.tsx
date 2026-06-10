@@ -1546,7 +1546,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
         {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} customChores={customChores} saveCustomChores={saveCustomChores} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
-        {tab==="goals"    && <AdminGoals    family={family} goals={goals}   setGoals={setGoals} />}
+        {tab==="goals"    && <AdminGoals    family={family} goals={goals}   setGoals={setGoals} dbGoalRows={dbGoalRows} />}
         {tab==="trips"    && <AdminTrips    family={family} trips={trips}   saveTrips={saveTrips} />}
       </div>
     </div>
@@ -2471,14 +2471,12 @@ function tripImageUrl(trip) {
   if (trip.photoUrl) return trip.photoUrl;
   return `https://source.unsplash.com/featured/800x600?${encodeURIComponent(trip.imageKeyword||trip.destination||"travel")}`;
 }
-
 function TripsPage({ trips, family }) {
   const memberMap = Object.fromEntries(family.map(m=>[m.id,m]));
   const today = getMountainToday();
   const sorted = [...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
   const upcoming = sorted.filter(t=>!t.startDate||new Date(t.startDate+"T00:00:00")>=today);
   const past     = sorted.filter(t=> t.startDate&&new Date(t.startDate+"T00:00:00")<today);
-
   if (!sorted.length) return (
     <div style={{padding:"80px 24px",textAlign:"center",fontFamily:"'Fredoka',sans-serif"}}>
       <div style={{fontSize:64,marginBottom:16}}>✈️</div>
@@ -2486,19 +2484,15 @@ function TripsPage({ trips, family }) {
       <div style={{fontSize:15,color:T.muted}}>Go to Admin → Trips to add your first adventure.</div>
     </div>
   );
-
   const [next,...rest] = upcoming;
-
   return (
     <div style={{paddingBottom:T.navH+16,background:T.bg,minHeight:"100vh"}}>
       <div style={{padding:"14px 12px 10px"}}>
         <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:24,fontWeight:700,color:T.text}}>✈️ Family Trips</div>
         <div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted}}>{upcoming.length} upcoming · {past.length} completed</div>
       </div>
-
-      {/* BIG hero card — next trip */}
       {next&&(()=>{
-        const days=tripDaysAway(next.startDate), nights=tripNights(next.startDate,next.endDate);
+        const days=tripDaysAway(next.startDate),nights=tripNights(next.startDate,next.endDate);
         const members=(next.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
         return (
           <div style={{margin:"0 10px 12px",borderRadius:22,overflow:"hidden",position:"relative",height:300,boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}>
@@ -2506,12 +2500,10 @@ function TripsPage({ trips, family }) {
             <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.08) 0%,rgba(0,0,0,0.45) 55%,rgba(0,0,0,0.85) 100%)"}}/>
             <div style={{position:"absolute",top:0,left:0,right:0,zIndex:2,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
               <div style={{background:"rgba(255,255,255,0.22)",backdropFilter:"blur(6px)",borderRadius:99,padding:"4px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:11,fontWeight:700,color:"#fff",letterSpacing:1}}>NEXT UP</div>
-              {days!==null&&days>=0&&(
-                <div style={{textAlign:"center",background:"rgba(0,0,0,0.35)",backdropFilter:"blur(8px)",borderRadius:14,padding:"8px 14px",border:"1px solid rgba(255,255,255,0.2)"}}>
-                  <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:44,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
-                  <div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,fontWeight:700,color:"rgba(255,255,255,0.9)",letterSpacing:1.2,textTransform:"uppercase"}}>days away</div>
-                </div>
-              )}
+              {days!==null&&days>=0&&<div style={{textAlign:"center",background:"rgba(0,0,0,0.35)",backdropFilter:"blur(8px)",borderRadius:14,padding:"8px 14px",border:"1px solid rgba(255,255,255,0.2)"}}>
+                <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:44,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
+                <div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,fontWeight:700,color:"rgba(255,255,255,0.9)",letterSpacing:1.2,textTransform:"uppercase"}}>days away</div>
+              </div>}
               {days!==null&&days<0&&<div style={{background:"#2D7A56",borderRadius:14,padding:"7px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>Happening now! 🎉</div>}
             </div>
             <div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:2,padding:"16px"}}>
@@ -2526,8 +2518,6 @@ function TripsPage({ trips, family }) {
           </div>
         );
       })()}
-
-      {/* Coming up — 4 per row, compact squares, max 2 rows visible */}
       {rest.length>0&&(
         <div style={{padding:"0 10px"}}>
           <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.sub,marginBottom:8,letterSpacing:.6}}>COMING UP</div>
@@ -2540,22 +2530,14 @@ function TripsPage({ trips, family }) {
                   <div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center"}}/>
                   <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.0) 0%,rgba(0,0,0,0.72) 100%)"}}/>
                   <div style={{position:"absolute",inset:0,zIndex:2,padding:"5px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
-                    {/* Countdown */}
-                    {days!==null&&days>=0&&(
-                      <div style={{alignSelf:"flex-end",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(3px)",borderRadius:7,padding:"2px 5px",textAlign:"center",border:"1px solid rgba(255,255,255,0.15)"}}>
-                        <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
-                        <div style={{fontFamily:"'Nunito',sans-serif",fontSize:7,fontWeight:700,color:"rgba(255,255,255,0.85)",letterSpacing:.6,textTransform:"uppercase"}}>days</div>
-                      </div>
-                    )}
-                    {/* Name + members */}
+                    {days!==null&&days>=0&&<div style={{alignSelf:"flex-end",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(3px)",borderRadius:7,padding:"2px 5px",textAlign:"center",border:"1px solid rgba(255,255,255,0.15)"}}>
+                      <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
+                      <div style={{fontFamily:"'Nunito',sans-serif",fontSize:7,fontWeight:700,color:"rgba(255,255,255,0.85)",letterSpacing:.6,textTransform:"uppercase"}}>days</div>
+                    </div>}
                     <div>
                       <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff",lineHeight:1.2,textShadow:"0 1px 4px rgba(0,0,0,0.7)"}}>{trip.destination}</div>
                       <div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,color:"rgba(255,255,255,0.85)",marginTop:1}}>{formatTripDates(trip.startDate,trip.endDate)}</div>
-                      {members.length>0&&(
-                        <div style={{display:"flex",gap:2,marginTop:3}}>
-                          {members.map(m=><div key={m.id} style={{width:14,height:14,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8}}>{m.emoji}</div>)}
-                        </div>
-                      )}
+                      {members.length>0&&<div style={{display:"flex",gap:2,marginTop:3}}>{members.map(m=><div key={m.id} style={{width:14,height:14,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8}}>{m.emoji}</div>)}</div>}
                     </div>
                   </div>
                 </div>
@@ -2564,8 +2546,6 @@ function TripsPage({ trips, family }) {
           </div>
         </div>
       )}
-
-      {/* Memories */}
       {past.length>0&&(
         <div style={{padding:"0 10px"}}>
           <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.muted,marginBottom:8,letterSpacing:.6}}>MEMORIES</div>
@@ -2588,7 +2568,6 @@ function TripsPage({ trips, family }) {
     </div>
   );
 }
-
 function AdminTrips({ family, trips, saveTrips }) {
   const ET = { destination:"", startDate:"", endDate:"", location:"", tripType:"", imageKeyword:"", photoUrl:"", memberIds:[] };
   const [form, setForm] = useState(ET);
@@ -2625,8 +2604,8 @@ function AdminTrips({ family, trips, saveTrips }) {
               </select>
             </div>
           </div>
-          <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Photo Keyword <span style={{fontWeight:400,color:T.muted}}>(auto-finds background photo)</span></label>{inp("imageKeyword","e.g. outer banks beach, yellowstone bison")}</div>
-          <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Custom Photo URL <span style={{fontWeight:400,color:T.muted}}>(optional — overrides keyword)</span></label>{inp("photoUrl","https://your-photo.jpg")}</div>
+          <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Photo Keyword</label>{inp("imageKeyword","e.g. outer banks beach, yellowstone bison")}</div>
+          <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Custom Photo URL <span style={{fontWeight:400,color:T.muted}}>(optional)</span></label>{inp("photoUrl","https://your-photo.jpg")}</div>
           <div style={{marginBottom:16}}>
             <label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:8}}>Who's Going?</label>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{family.map(m=>{const on=(form.memberIds||[]).includes(m.id);return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,border:`2px solid ${on?m.color:T.border}`,background:on?m.color:"transparent",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:on?"#fff":T.sub}}>{m.emoji} {m.name}</button>;})}</div>
