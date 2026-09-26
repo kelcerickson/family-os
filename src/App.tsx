@@ -483,6 +483,147 @@ function Screensaver({ onDismiss, message }) {
   );
 }
 
+
+function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, completions, onDismiss }) {
+  const [pulse, setPulse] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => setPulse(p => !p), type === "2pm" ? 800 : 1200);
+    return () => clearInterval(interval);
+  }, [type]);
+
+  // Auto-dismiss timings:
+  //   1:30pm → 5 minutes (300000ms)
+  //   1:50pm → 1 minute  (60000ms)
+  //   2:00pm → stays until tapped
+  useEffect(() => {
+    if (type === "130pm") { const t = setTimeout(onDismiss, 300000); return () => clearTimeout(t); }
+    if (type === "150pm") { const t = setTimeout(onDismiss, 60000);  return () => clearTimeout(t); }
+  }, [type, onDismiss]);
+
+  const config = {
+    "130pm": {
+      bg: "linear-gradient(160deg, #1a3a5c 0%, #0f2240 100%)",
+      accent: "#FFB347",
+      emoji: "⏰",
+      headline: "It's 1:30 PM",
+      sub: "Time to wrap up School, Chores, Exercise, and Goals.",
+      detail: "Everything gets checked off at 2:00 PM.",
+    },
+    "150pm": {
+      bg: "linear-gradient(160deg, #7c2d12 0%, #431407 100%)",
+      accent: "#FCA5A5",
+      emoji: "🔔",
+      headline: "10 Minutes!",
+      sub: "Last chance to finish up!",
+      detail: "Check-off time is at 2:00 PM.",
+    },
+    "2pm": {
+      bg: "linear-gradient(160deg, #1a0a2e 0%, #2d1254 100%)",
+      accent: "#C084FC",
+      emoji: "✅",
+      headline: "Check-Off Time!",
+      sub: "2:00 PM — time to check everything off.",
+      detail: "Tap anywhere to dismiss.",
+    },
+  }[type] || {};
+
+  function getMemberStatus(member) {
+    const today = getMountainToday();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    const memberTasks = tasks[member.id] || {};
+    const choreTasks = getContributeTasksForMember(member.id, today, choreAssignments, customChores);
+    return [
+      { label:"School",   items: memberTasks.learn    || [] },
+      { label:"Exercise", items: memberTasks.exercise || [] },
+      { label:"Chores",   items: choreTasks },
+      { label:"Goals",    items: memberTasks.goals    || [] },
+    ].map(sec => {
+      if (!sec.items.length) return null;
+      const allDone = sec.items.every(t => completions && completions[t.label + "|" + member.id]);
+      return { ...sec, allDone };
+    }).filter(Boolean);
+  }
+
+  const kids = family.filter(m => m.defaultOn);
+
+  return (
+    <div onClick={onDismiss} onTouchStart={onDismiss} style={{
+      position:"fixed", inset:0, zIndex:9998,
+      background: config.bg,
+      display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center",
+      cursor:"pointer", userSelect:"none", padding:"40px 32px",
+    }}>
+      <div style={{
+        position:"absolute", inset:0, zIndex:0, pointerEvents:"none",
+        boxShadow: pulse ? `inset 0 0 0 6px ${config.accent}88` : `inset 0 0 0 2px ${config.accent}33`,
+        transition:"box-shadow 0.4s ease",
+      }} />
+
+      <div style={{ position:"relative", zIndex:1, textAlign:"center", marginBottom:24 }}>
+        <div style={{ fontSize:72, lineHeight:1, marginBottom:16, filter:`drop-shadow(0 0 24px ${config.accent})` }}>{config.emoji}</div>
+        <div style={{
+          fontFamily:"'Fredoka',sans-serif", fontSize: type==="2pm" ? 72 : 64,
+          fontWeight:700, color:config.accent, lineHeight:1, letterSpacing:-1,
+          textShadow:`0 0 40px ${config.accent}88`,
+          transform: pulse && type!=="2pm" ? "scale(1.04)" : "scale(1)",
+          transition:"transform 0.6s ease",
+        }}>{config.headline}</div>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:22, fontWeight:700, color:"rgba(255,255,255,0.9)", marginTop:12 }}>{config.sub}</div>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:15, color:"rgba(255,255,255,0.5)", marginTop:6 }}>{config.detail}</div>
+      </div>
+
+      {type === "2pm" && (
+        <div style={{ position:"relative", zIndex:1, display:"flex", gap:16, flexWrap:"wrap", justifyContent:"center", width:"100%", maxWidth:900 }}>
+          {kids.map(member => {
+            const sections = getMemberStatus(member);
+            const allDone = sections.every(s => s.allDone);
+            return (
+              <div key={member.id} style={{
+                background: allDone ? "rgba(45,122,86,0.35)" : "rgba(255,255,255,0.08)",
+                border:`2px solid ${allDone ? "#4ade80" : "rgba(255,255,255,0.15)"}`,
+                borderRadius:20, padding:"18px 22px", minWidth:180, flex:"1 1 160px",
+              }}>
+                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+                  <span style={{ fontSize:28 }}>{member.emoji}</span>
+                  <div>
+                    <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:20, fontWeight:700, color:"#fff" }}>{member.name}</div>
+                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:allDone?"#4ade80":"rgba(255,255,255,0.5)" }}>
+                      {allDone ? "✅ All done!" : `${sections.filter(s=>s.allDone).length}/${sections.length} sections`}
+                    </div>
+                  </div>
+                </div>
+                {sections.map(sec => (
+                  <div key={sec.label} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
+                    <div style={{
+                      width:20, height:20, borderRadius:"50%", flexShrink:0,
+                      background:sec.allDone?"#4ade80":"rgba(255,255,255,0.15)",
+                      border:`2px solid ${sec.allDone?"#4ade80":"rgba(255,255,255,0.3)"}`,
+                      display:"flex", alignItems:"center", justifyContent:"center", fontSize:11,
+                    }}>{sec.allDone?"✓":""}</div>
+                    <span style={{
+                      fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600,
+                      color:sec.allDone?"rgba(255,255,255,0.6)":"#fff",
+                      textDecoration:sec.allDone?"line-through":"none",
+                    }}>{sec.label}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ position:"relative", zIndex:1, fontFamily:"'Nunito',sans-serif", fontSize:13, color:"rgba(255,255,255,0.3)", marginTop:32 }}>
+        Tap anywhere to dismiss
+        {type === "130pm" && " · auto-dismisses in 5 minutes"}
+        {type === "150pm" && " · auto-dismisses in 1 minute"}
+      </div>
+    </div>
+  );
+}
+
 // ── Top Bar ───────────────────────────────────────────────────────────────────
 function TopBar({ onAdmin }) {
   return (
@@ -2651,6 +2792,8 @@ function AppInner() {
   const [adminMode, setAdminMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [screensaver, setScreensaver] = useState(false);
+  const [checklistAlert, setChecklistAlert] = useState(null);
+  const [alertDismissedFor, setAlertDismissedFor] = useState({});
 
   const [events,           setEvents]           = useState([]);
   const [choreAssignments, setChoreAssignments] = useState({});
@@ -2844,6 +2987,29 @@ function AppInner() {
 
     loadAll();
 
+    const ALERT_TIMES = [
+      { key:"130pm", h:13, m:30 },
+      { key:"150pm", h:13, m:50 },
+      { key:"2pm",   h:14, m:0  },
+    ];
+    function checkAlertTimes() {
+      const now = new Date(new Date().toLocaleString("en-US", { timeZone:"America/Denver" }));
+      const h = now.getHours(), m = now.getMinutes();
+      const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+      for (const alert of ALERT_TIMES) {
+        if (h === alert.h && m === alert.m) {
+          const alertKey = `${alert.key}-${todayKey}`;
+          setAlertDismissedFor(prev => {
+            if (prev[alertKey]) return prev;
+            setChecklistAlert(alert.key);
+            return { ...prev, [alertKey]: true };
+          });
+        }
+      }
+    }
+    const alertInterval = setInterval(checkAlertTimes, 30000);
+    checkAlertTimes();
+
     // Screensaver inactivity timer
     let timer = null;
     function resetTimer() {
@@ -2864,6 +3030,7 @@ function AppInner() {
     check();
 
     return () => {
+      clearInterval(alertInterval);
       window.removeEventListener("hashchange", check);
       events.forEach(e => window.removeEventListener(e, onActivity));
       if (timer) clearTimeout(timer);
@@ -2877,10 +3044,22 @@ function AppInner() {
 
   const goAdmin = () => { window.location.hash = "#admin"; };
 
-  const screensaverEl = screensaver ? <Screensaver onDismiss={() => setScreensaver(false)} message={screensaverMsg} /> : null;
+  const checklistAlertEl = checklistAlert ? (
+    <ChecklistAlert
+      type={checklistAlert}
+      family={family}
+      tasks={tasks}
+      choreAssignments={choreAssignments}
+      customChores={customChores}
+      completions={null}
+      onDismiss={() => setChecklistAlert(null)}
+    />
+  ) : null;
+  const screensaverEl = screensaver && !checklistAlert ? <Screensaver onDismiss={() => setScreensaver(false)} message={screensaverMsg} /> : null;
 
   if (loading) return (
     <>
+      {checklistAlertEl}
       {screensaverEl}
       <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", height:"100vh", background:T.bg, fontFamily:"'Fredoka',sans-serif", gap:16 }}>
         <div style={{ fontSize:48 }}>🏡</div>
@@ -2902,6 +3081,7 @@ function AppInner() {
 
   return (
     <div style={{ background:T.bg, width:"100vw", minHeight:"100vh", overflowX:"hidden", userSelect:"none", WebkitUserSelect:"none", MozUserSelect:"none", touchAction:"pan-y" }}>
+      {checklistAlertEl}
       {screensaverEl}
       <TopBar onAdmin={goAdmin} />
       {page==="trips"    && <TripsPage    trips={trips} family={family} />}
