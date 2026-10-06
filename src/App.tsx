@@ -486,99 +486,60 @@ function Screensaver({ onDismiss, message }) {
 
 function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, completions, onDismiss }) {
   const [pulse, setPulse] = useState(true);
-
+  useEffect(() => { const i=setInterval(()=>setPulse(p=>!p),type==="2pm"?800:1200); return ()=>clearInterval(i); }, [type]);
   useEffect(() => {
-    const interval = setInterval(() => setPulse(p => !p), type === "2pm" ? 800 : 1200);
-    return () => clearInterval(interval);
-  }, [type]);
-
-  useEffect(() => {
-    if (type === "130pm") { const t = setTimeout(onDismiss, 300000); return () => clearTimeout(t); }
-    if (type === "150pm") { const t = setTimeout(onDismiss, 60000);  return () => clearTimeout(t); }
-  }, [type, onDismiss]);
-
+    if (type==="130pm"){const t=setTimeout(onDismiss,300000);return ()=>clearTimeout(t);}
+    if (type==="150pm"){const t=setTimeout(onDismiss,60000);return ()=>clearTimeout(t);}
+  }, [type,onDismiss]);
   const config = {
-    "130pm": { bg:"linear-gradient(160deg,#1a3a5c 0%,#0f2240 100%)", accent:"#FFB347", emoji:"⏰", headline:"It's 1:30 PM", sub:"Time to wrap up School, Chores, Exercise, and Goals.", detail:"Everything gets checked off at 2:00 PM." },
-    "150pm": { bg:"linear-gradient(160deg,#7c2d12 0%,#431407 100%)", accent:"#FCA5A5", emoji:"🔔", headline:"10 Minutes!",  sub:"Last chance to finish up!", detail:"Check-off time is at 2:00 PM." },
-    "2pm":   { bg:"linear-gradient(160deg,#1a0a2e 0%,#2d1254 100%)", accent:"#C084FC", emoji:"✅", headline:"Check-Off Time!", sub:"2:00 PM — time to check everything off.", detail:"Tap anywhere to dismiss." },
-    "payday":{ bg:"linear-gradient(160deg,#14532d 0%,#065f46 100%)", accent:"#4ade80", emoji:"💰", headline:"Pay Day! 💸",  sub:"Time to pay the girls for the week!", detail:"Tap anywhere to dismiss." },
-  }[type] || {};
-
+    "130pm":{ bg:"linear-gradient(160deg,#1a3a5c 0%,#0f2240 100%)", accent:"#FFB347", emoji:"⏰", headline:"It's 1:30 PM", sub:"Time to wrap up School, Chores, Exercise, and Goals.", detail:"Everything gets checked off at 2:00 PM." },
+    "150pm":{ bg:"linear-gradient(160deg,#7c2d12 0%,#431407 100%)", accent:"#FCA5A5", emoji:"🔔", headline:"10 Minutes!", sub:"Last chance to finish up!", detail:"Check-off time is at 2:00 PM." },
+    "2pm":  { bg:"linear-gradient(160deg,#1a0a2e 0%,#2d1254 100%)", accent:"#C084FC", emoji:"✅", headline:"Check-Off Time!", sub:"2:00 PM — time to check everything off.", detail:"Tap anywhere to dismiss." },
+    "payday":{ bg:"linear-gradient(160deg,#14532d 0%,#065f46 100%)", accent:"#4ade80", emoji:"💰", headline:"Pay Day! 💸", sub:"Time to pay the girls for the week!", detail:"Tap anywhere to dismiss." },
+  }[type]||{};
   function getMemberStatus(member) {
-    const today = getMountainToday();
-    const memberTasks = tasks[member.id] || {};
-    const choreTasks = getContributeTasksForMember(member.id, today, choreAssignments, customChores);
+    const today=getMountainToday();
+    const memberTasks=tasks[member.id]||{};
+    const choreTasks=getContributeTasksForMember(member.id,today,choreAssignments,customChores);
     return [
-      { label:"School",   items: memberTasks.learn    || [] },
-      { label:"Exercise", items: memberTasks.exercise || [] },
-      { label:"Chores",   items: choreTasks },
-      { label:"Goals",    items: memberTasks.goals    || [] },
-    ].map(sec => {
-      if (!sec.items.length) return null;
-      const allDone = sec.items.every(t => completions && completions[t.label+"|"+member.id]);
-      return { ...sec, allDone };
+      {label:"School",  items:memberTasks.learn||[]},
+      {label:"Exercise",items:memberTasks.exercise||[]},
+      {label:"Chores",  items:choreTasks},
+      {label:"Goals",   items:memberTasks.goals||[]},
+    ].map(sec=>{
+      if(!sec.items.length)return null;
+      const allDone=sec.items.every(t=>completions&&completions[t.label+"|"+member.id]);
+      return {...sec,allDone};
     }).filter(Boolean);
   }
-
-  const kids = family.filter(m => m.defaultOn);
-
+  const kids=family.filter(m=>m.defaultOn);
   return (
-    <div onClick={onDismiss} onTouchStart={onDismiss} style={{
-      position:"fixed", inset:0, zIndex:9998,
-      background:config.bg,
-      display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-      cursor:"pointer", userSelect:"none", padding:"40px 32px",
-    }}>
-      <div style={{ position:"absolute", inset:0, zIndex:0, pointerEvents:"none",
-        boxShadow:pulse?`inset 0 0 0 6px ${config.accent}88`:`inset 0 0 0 2px ${config.accent}33`,
-        transition:"box-shadow 0.4s ease" }} />
-
-      <div style={{ position:"relative", zIndex:1, textAlign:"center", marginBottom:type==="payday"?0:24 }}>
-        <div style={{ fontSize: type==="payday"?120:72, lineHeight:1, marginBottom:16,
-          filter:`drop-shadow(0 0 32px ${config.accent})`,
-          transform:pulse?"scale(1.05)":"scale(1)", transition:"transform 0.6s ease",
-        }}>{config.emoji}</div>
-        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:type==="payday"?80:64,
-          fontWeight:700, color:config.accent, lineHeight:1, letterSpacing:-1,
-          textShadow:`0 0 40px ${config.accent}88`,
-        }}>{config.headline}</div>
-        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:type==="payday"?28:22,
-          fontWeight:700, color:"rgba(255,255,255,0.9)", marginTop:16 }}>{config.sub}</div>
-        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:15,
-          color:"rgba(255,255,255,0.45)", marginTop:8 }}>{config.detail}</div>
+    <div onClick={onDismiss} onTouchStart={onDismiss} style={{position:"fixed",inset:0,zIndex:9998,background:config.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",cursor:"pointer",userSelect:"none",padding:"40px 32px"}}>
+      <div style={{position:"absolute",inset:0,zIndex:0,pointerEvents:"none",boxShadow:pulse?`inset 0 0 0 6px ${config.accent}88`:`inset 0 0 0 2px ${config.accent}33`,transition:"box-shadow 0.4s ease"}}/>
+      <div style={{position:"relative",zIndex:1,textAlign:"center",marginBottom:type==="payday"?0:24}}>
+        <div style={{fontSize:type==="payday"?120:72,lineHeight:1,marginBottom:16,filter:`drop-shadow(0 0 32px ${config.accent})`,transform:pulse?"scale(1.05)":"scale(1)",transition:"transform 0.6s ease"}}>{config.emoji}</div>
+        <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:type==="payday"?80:64,fontWeight:700,color:config.accent,lineHeight:1,letterSpacing:-1,textShadow:`0 0 40px ${config.accent}88`}}>{config.headline}</div>
+        <div style={{fontFamily:"'Nunito',sans-serif",fontSize:type==="payday"?28:22,fontWeight:700,color:"rgba(255,255,255,0.9)",marginTop:16}}>{config.sub}</div>
+        <div style={{fontFamily:"'Nunito',sans-serif",fontSize:15,color:"rgba(255,255,255,0.45)",marginTop:8}}>{config.detail}</div>
       </div>
-
-      {type === "2pm" && (
-        <div style={{ position:"relative", zIndex:1, display:"flex", gap:16, flexWrap:"wrap", justifyContent:"center", width:"100%", maxWidth:900, marginTop:24 }}>
-          {kids.map(member => {
-            const sections = getMemberStatus(member);
-            const allDone = sections.every(s => s.allDone);
+      {type==="2pm"&&(
+        <div style={{position:"relative",zIndex:1,display:"flex",gap:16,flexWrap:"wrap",justifyContent:"center",width:"100%",maxWidth:900,marginTop:24}}>
+          {kids.map(member=>{
+            const sections=getMemberStatus(member);
+            const allDone=sections.every(s=>s.allDone);
             return (
-              <div key={member.id} style={{
-                background:allDone?"rgba(45,122,86,0.35)":"rgba(255,255,255,0.08)",
-                border:`2px solid ${allDone?"#4ade80":"rgba(255,255,255,0.15)"}`,
-                borderRadius:20, padding:"18px 22px", minWidth:180, flex:"1 1 160px",
-              }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
-                  <span style={{ fontSize:28 }}>{member.emoji}</span>
+              <div key={member.id} style={{background:allDone?"rgba(45,122,86,0.35)":"rgba(255,255,255,0.08)",border:`2px solid ${allDone?"#4ade80":"rgba(255,255,255,0.15)"}`,borderRadius:20,padding:"18px 22px",minWidth:180,flex:"1 1 160px"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                  <span style={{fontSize:28}}>{member.emoji}</span>
                   <div>
-                    <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:20, fontWeight:700, color:"#fff" }}>{member.name}</div>
-                    <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, color:allDone?"#4ade80":"rgba(255,255,255,0.5)" }}>
-                      {allDone?"✅ All done!":`${sections.filter(s=>s.allDone).length}/${sections.length} sections`}
-                    </div>
+                    <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:20,fontWeight:700,color:"#fff"}}>{member.name}</div>
+                    <div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:allDone?"#4ade80":"rgba(255,255,255,0.5)"}}>{allDone?"✅ All done!":`${sections.filter(s=>s.allDone).length}/${sections.length} sections`}</div>
                   </div>
                 </div>
-                {sections.map(sec => (
-                  <div key={sec.label} style={{ display:"flex", alignItems:"center", gap:8, marginBottom:6 }}>
-                    <div style={{ width:20, height:20, borderRadius:"50%", flexShrink:0,
-                      background:sec.allDone?"#4ade80":"rgba(255,255,255,0.15)",
-                      border:`2px solid ${sec.allDone?"#4ade80":"rgba(255,255,255,0.3)"}`,
-                      display:"flex", alignItems:"center", justifyContent:"center", fontSize:11,
-                    }}>{sec.allDone?"✓":""}</div>
-                    <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:13, fontWeight:600,
-                      color:sec.allDone?"rgba(255,255,255,0.6)":"#fff",
-                      textDecoration:sec.allDone?"line-through":"none",
-                    }}>{sec.label}</span>
+                {sections.map(sec=>(
+                  <div key={sec.label} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <div style={{width:20,height:20,borderRadius:"50%",flexShrink:0,background:sec.allDone?"#4ade80":"rgba(255,255,255,0.15)",border:`2px solid ${sec.allDone?"#4ade80":"rgba(255,255,255,0.3)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11}}>{sec.allDone?"✓":""}</div>
+                    <span style={{fontFamily:"'Nunito',sans-serif",fontSize:13,fontWeight:600,color:sec.allDone?"rgba(255,255,255,0.6)":"#fff",textDecoration:sec.allDone?"line-through":"none"}}>{sec.label}</span>
                   </div>
                 ))}
               </div>
@@ -586,203 +547,91 @@ function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, c
           })}
         </div>
       )}
-
-      <div style={{ position:"relative", zIndex:1, fontFamily:"'Nunito',sans-serif", fontSize:13, color:"rgba(255,255,255,0.3)", marginTop:32 }}>
+      <div style={{position:"relative",zIndex:1,fontFamily:"'Nunito',sans-serif",fontSize:13,color:"rgba(255,255,255,0.3)",marginTop:32}}>
         Tap anywhere to dismiss
-        {type==="130pm" && " · auto-dismisses in 5 minutes"}
-        {type==="150pm" && " · auto-dismisses in 1 minute"}
+        {type==="130pm"&&" · auto-dismisses in 5 minutes"}
+        {type==="150pm"&&" · auto-dismisses in 1 minute"}
       </div>
     </div>
   );
 }
 
-function tripDaysAway(dateStr) {
-  if (!dateStr) return null;
-  return Math.ceil((new Date(dateStr+"T00:00:00") - getMountainToday()) / (1000*60*60*24));
-}
-function formatTripDates(s, e) {
-  if (!s) return "";
-  const o = { month:"short", day:"numeric" };
-  const start = new Date(s+"T00:00:00").toLocaleDateString("en-US", o);
-  return e ? `${start} – ${new Date(e+"T00:00:00").toLocaleDateString("en-US",o)}` : start;
-}
-function tripNights(s, e) {
-  if (!s||!e) return 0;
-  return Math.round((new Date(e+"T00:00:00")-new Date(s+"T00:00:00"))/(1000*60*60*24));
-}
-function tripImageUrl(trip) {
-  if (trip.photoUrl) return trip.photoUrl;
-  return `https://source.unsplash.com/featured/800x600?${encodeURIComponent(trip.imageKeyword||trip.destination||"travel")}`;
-}
-function TripsPage({ trips, family }) {
-  const memberMap = Object.fromEntries(family.map(m=>[m.id,m]));
-  const today = getMountainToday();
-  const sorted = [...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
-  const upcoming = sorted.filter(t=>!t.startDate||new Date(t.startDate+"T00:00:00")>=today);
-  const past     = sorted.filter(t=> t.startDate&&new Date(t.startDate+"T00:00:00")<today);
-  if (!sorted.length) return (
-    <div style={{padding:"80px 24px",textAlign:"center",fontFamily:"'Fredoka',sans-serif"}}>
-      <div style={{fontSize:64,marginBottom:16}}>✈️</div>
-      <div style={{fontSize:22,fontWeight:700,color:T.text,marginBottom:8}}>No trips yet!</div>
-      <div style={{fontSize:15,color:T.muted}}>Go to Admin → Trips to add your first adventure.</div>
-    </div>
-  );
-  const [next,...rest] = upcoming;
-  return (
+function tripDaysAway(dateStr){if(!dateStr)return null;return Math.ceil((new Date(dateStr+"T00:00:00")-getMountainToday())/(1000*60*60*24));}
+function formatTripDates(s,e){if(!s)return "";const o={month:"short",day:"numeric"};const start=new Date(s+"T00:00:00").toLocaleDateString("en-US",o);return e?`${start} – ${new Date(e+"T00:00:00").toLocaleDateString("en-US",o)}`:start;}
+function tripNights(s,e){if(!s||!e)return 0;return Math.round((new Date(e+"T00:00:00")-new Date(s+"T00:00:00"))/(1000*60*60*24));}
+function tripImageUrl(trip){if(trip.photoUrl)return trip.photoUrl;return `https://source.unsplash.com/featured/800x600?${encodeURIComponent(trip.imageKeyword||trip.destination||"travel")}`;}
+function TripsPage({trips,family}){
+  const memberMap=Object.fromEntries(family.map(m=>[m.id,m]));
+  const today=getMountainToday();
+  const sorted=[...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
+  const upcoming=sorted.filter(t=>!t.startDate||new Date(t.startDate+"T00:00:00")>=today);
+  const past=sorted.filter(t=>t.startDate&&new Date(t.startDate+"T00:00:00")<today);
+  if(!sorted.length)return(<div style={{padding:"80px 24px",textAlign:"center",fontFamily:"'Fredoka',sans-serif"}}><div style={{fontSize:64,marginBottom:16}}>✈️</div><div style={{fontSize:22,fontWeight:700,color:T.text,marginBottom:8}}>No trips yet!</div><div style={{fontSize:15,color:T.muted}}>Go to Admin → Trips to add your first adventure.</div></div>);
+  const [next,...rest]=upcoming;
+  return(
     <div style={{paddingBottom:T.navH+16,background:T.bg,minHeight:"100vh"}}>
-      <div style={{padding:"14px 12px 10px"}}>
-        <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:24,fontWeight:700,color:T.text}}>✈️ Family Trips</div>
-        <div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted}}>{upcoming.length} upcoming · {past.length} completed</div>
-      </div>
+      <div style={{padding:"14px 12px 10px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:24,fontWeight:700,color:T.text}}>✈️ Family Trips</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted}}>{upcoming.length} upcoming · {past.length} completed</div></div>
       {next&&(()=>{
         const days=tripDaysAway(next.startDate),nights=tripNights(next.startDate,next.endDate);
         const members=(next.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
-        return (
-          <div style={{margin:"0 10px 12px",borderRadius:22,overflow:"hidden",position:"relative",height:300,boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}>
-            <div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(next)})`,backgroundSize:"cover",backgroundPosition:"center"}}/>
-            <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.08) 0%,rgba(0,0,0,0.45) 55%,rgba(0,0,0,0.85) 100%)"}}/>
-            <div style={{position:"absolute",top:0,left:0,right:0,zIndex:2,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-              <div style={{background:"rgba(255,255,255,0.22)",backdropFilter:"blur(6px)",borderRadius:99,padding:"4px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:11,fontWeight:700,color:"#fff",letterSpacing:1}}>NEXT UP</div>
-              {days!==null&&days>=0&&<div style={{textAlign:"center",background:"rgba(0,0,0,0.35)",backdropFilter:"blur(8px)",borderRadius:14,padding:"8px 14px",border:"1px solid rgba(255,255,255,0.2)"}}>
-                <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:44,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
-                <div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,fontWeight:700,color:"rgba(255,255,255,0.9)",letterSpacing:1.2,textTransform:"uppercase"}}>days away</div>
-              </div>}
-              {days!==null&&days<0&&<div style={{background:"#2D7A56",borderRadius:14,padding:"7px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>Happening now! 🎉</div>}
-            </div>
-            <div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:2,padding:"16px"}}>
-              <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:28,fontWeight:700,color:"#fff",lineHeight:1.15,textShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>{next.destination}</div>
-              <div style={{fontFamily:"'Nunito',sans-serif",fontSize:13,color:"rgba(255,255,255,0.9)",marginTop:3,marginBottom:10}}>{formatTripDates(next.startDate,next.endDate)}{nights>0?` · ${nights} night${nights!==1?"s":""}`:""}</div>
-              <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-                {next.location&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>📍 {next.location}</div>}
-                {next.tripType&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>{next.tripType}</div>}
-                {members.length>0&&<div style={{display:"flex",gap:3,marginLeft:"auto"}}>{members.map(m=><div key={m.id} style={{width:26,height:26,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"2px solid rgba(255,255,255,0.65)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>{m.emoji}</div>)}</div>}
-              </div>
+        return(<div style={{margin:"0 10px 12px",borderRadius:22,overflow:"hidden",position:"relative",height:300,boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}>
+          <div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(next)})`,backgroundSize:"cover",backgroundPosition:"center"}}/>
+          <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.08) 0%,rgba(0,0,0,0.45) 55%,rgba(0,0,0,0.85) 100%)"}}/>
+          <div style={{position:"absolute",top:0,left:0,right:0,zIndex:2,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div style={{background:"rgba(255,255,255,0.22)",backdropFilter:"blur(6px)",borderRadius:99,padding:"4px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:11,fontWeight:700,color:"#fff",letterSpacing:1}}>NEXT UP</div>
+            {days!==null&&days>=0&&<div style={{textAlign:"center",background:"rgba(0,0,0,0.35)",backdropFilter:"blur(8px)",borderRadius:14,padding:"8px 14px",border:"1px solid rgba(255,255,255,0.2)"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:44,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,fontWeight:700,color:"rgba(255,255,255,0.9)",letterSpacing:1.2,textTransform:"uppercase"}}>days away</div></div>}
+            {days!==null&&days<0&&<div style={{background:"#2D7A56",borderRadius:14,padding:"7px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>Happening now! 🎉</div>}
+          </div>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:2,padding:"16px"}}>
+            <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:28,fontWeight:700,color:"#fff",lineHeight:1.15,textShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>{next.destination}</div>
+            <div style={{fontFamily:"'Nunito',sans-serif",fontSize:13,color:"rgba(255,255,255,0.9)",marginTop:3,marginBottom:10}}>{formatTripDates(next.startDate,next.endDate)}{nights>0?` · ${nights} night${nights!==1?"s":""}`:""}</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+              {next.location&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>📍 {next.location}</div>}
+              {next.tripType&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>{next.tripType}</div>}
+              {members.length>0&&<div style={{display:"flex",gap:3,marginLeft:"auto"}}>{members.map(m=><div key={m.id} style={{width:26,height:26,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"2px solid rgba(255,255,255,0.65)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>{m.emoji}</div>)}</div>}
             </div>
           </div>
-        );
+        </div>);
       })()}
-      {rest.length>0&&(
-        <div style={{padding:"0 10px"}}>
-          <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.sub,marginBottom:8,letterSpacing:.6}}>COMING UP</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:12}}>
-            {rest.map(trip=>{
-              const days=tripDaysAway(trip.startDate);
-              const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
-              return (
-                <div key={trip.id} style={{borderRadius:12,overflow:"hidden",position:"relative",aspectRatio:"1/1",boxShadow:"0 2px 8px rgba(0,0,0,0.14)"}}>
-                  <div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center"}}/>
-                  <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.0) 0%,rgba(0,0,0,0.72) 100%)"}}/>
-                  <div style={{position:"absolute",inset:0,zIndex:2,padding:"5px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}>
-                    {days!==null&&days>=0&&<div style={{alignSelf:"flex-end",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(3px)",borderRadius:7,padding:"2px 5px",textAlign:"center",border:"1px solid rgba(255,255,255,0.15)"}}>
-                      <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div>
-                      <div style={{fontFamily:"'Nunito',sans-serif",fontSize:7,fontWeight:700,color:"rgba(255,255,255,0.85)",letterSpacing:.6,textTransform:"uppercase"}}>days</div>
-                    </div>}
-                    <div>
-                      <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff",lineHeight:1.2,textShadow:"0 1px 4px rgba(0,0,0,0.7)"}}>{trip.destination}</div>
-                      <div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,color:"rgba(255,255,255,0.85)",marginTop:1}}>{formatTripDates(trip.startDate,trip.endDate)}</div>
-                      {members.length>0&&<div style={{display:"flex",gap:2,marginTop:3}}>{members.map(m=><div key={m.id} style={{width:14,height:14,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8}}>{m.emoji}</div>)}</div>}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-      {past.length>0&&(
-        <div style={{padding:"0 10px"}}>
-          <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.muted,marginBottom:8,letterSpacing:.6}}>MEMORIES</div>
-          {[...past].reverse().map(trip=>{
-            const nights=tripNights(trip.startDate,trip.endDate);
-            const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
-            return (
-              <div key={trip.id} style={{display:"flex",background:T.white,borderRadius:12,overflow:"hidden",marginBottom:7,border:`1.5px solid ${T.border}`}}>
-                <div style={{width:64,flexShrink:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center",filter:"grayscale(35%)"}}/>
-                <div style={{padding:"9px 10px",flex:1}}>
-                  <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:T.text}}>{trip.destination}</div>
-                  <div style={{fontFamily:"'Nunito',sans-serif",fontSize:11,color:T.muted}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
-                  {members.length>0&&<div style={{display:"flex",gap:3,marginTop:4}}>{members.map(m=><span key={m.id} style={{fontSize:13}}>{m.emoji}</span>)}</div>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {rest.length>0&&(<div style={{padding:"0 10px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.sub,marginBottom:8,letterSpacing:.6}}>COMING UP</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:12}}>{rest.map(trip=>{const days=tripDaysAway(trip.startDate);const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);return(<div key={trip.id} style={{borderRadius:12,overflow:"hidden",position:"relative",aspectRatio:"1/1",boxShadow:"0 2px 8px rgba(0,0,0,0.14)"}}><div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center"}}/><div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.0) 0%,rgba(0,0,0,0.72) 100%)"}}/><div style={{position:"absolute",inset:0,zIndex:2,padding:"5px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}>{days!==null&&days>=0&&<div style={{alignSelf:"flex-end",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(3px)",borderRadius:7,padding:"2px 5px",textAlign:"center",border:"1px solid rgba(255,255,255,0.15)"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:7,fontWeight:700,color:"rgba(255,255,255,0.85)",letterSpacing:.6,textTransform:"uppercase"}}>days</div></div>}<div><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff",lineHeight:1.2,textShadow:"0 1px 4px rgba(0,0,0,0.7)"}}>{trip.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,color:"rgba(255,255,255,0.85)",marginTop:1}}>{formatTripDates(trip.startDate,trip.endDate)}</div>{members.length>0&&<div style={{display:"flex",gap:2,marginTop:3}}>{members.map(m=><div key={m.id} style={{width:14,height:14,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8}}>{m.emoji}</div>)}</div>}</div></div></div>);})}</div></div>)}
+      {past.length>0&&(<div style={{padding:"0 10px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.muted,marginBottom:8,letterSpacing:.6}}>MEMORIES</div>{[...past].reverse().map(trip=>{const nights=tripNights(trip.startDate,trip.endDate);const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);return(<div key={trip.id} style={{display:"flex",background:T.white,borderRadius:12,overflow:"hidden",marginBottom:7,border:`1.5px solid ${T.border}`}}><div style={{width:64,flexShrink:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center",filter:"grayscale(35%)"}}/><div style={{padding:"9px 10px",flex:1}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:T.text}}>{trip.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:11,color:T.muted}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>{members.length>0&&<div style={{display:"flex",gap:3,marginTop:4}}>{members.map(m=><span key={m.id} style={{fontSize:13}}>{m.emoji}</span>)}</div>}</div></div>);})}</div>)}
     </div>
   );
 }
-function AdminTrips({ family, trips, saveTrips }) {
-  const ET = { destination:"", startDate:"", endDate:"", location:"", tripType:"", imageKeyword:"", photoUrl:"", memberIds:[] };
-  const [form, setForm] = useState(ET);
-  const [editingId, setEditingId] = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const [saving, setSaving] = useState(false);
-  function startEdit(trip) { setForm({...ET,...trip}); setEditingId(trip.id); setShowForm(true); window.scrollTo({top:0,behavior:"smooth"}); }
-  function cancelForm() { setForm(ET); setEditingId(null); setShowForm(false); }
-  async function saveTripForm() {
-    if (!form.destination||!form.startDate) { alert("Please enter a destination and start date."); return; }
-    setSaving(true);
-    const next = editingId ? (trips||[]).map(t=>t.id===editingId?{...form,id:editingId}:t) : [...(trips||[]),{...form,id:Date.now().toString()}];
-    await saveTrips(next); setSaving(false); cancelForm();
-  }
-  async function deleteTrip(id) { if (!window.confirm("Remove this trip?")) return; await saveTrips((trips||[]).filter(t=>t.id!==id)); }
-  const TYPES = ["🏖️ Beach","🏔️ Mountains","🏙️ City","🎿 Ski","🌲 National Park","🚢 Cruise","🌍 International","🎡 Theme Park","🏕️ Camping","👨‍👩‍👧‍👦 Family Visit"];
-  const sorted = [...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
-  const inp = (field,ph,type="text") => <input type={type} value={form[field]} onChange={e=>setForm(f=>({...f,[field]:e.target.value}))} placeholder={ph} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}/>;
-  return (
+function AdminTrips({family,trips,saveTrips}){
+  const ET={destination:"",startDate:"",endDate:"",location:"",tripType:"",imageKeyword:"",photoUrl:"",memberIds:[]};
+  const [form,setForm]=useState(ET);const [editingId,setEditingId]=useState(null);const [showForm,setShowForm]=useState(false);const [saving,setSaving]=useState(false);
+  function startEdit(trip){setForm({...ET,...trip});setEditingId(trip.id);setShowForm(true);window.scrollTo({top:0,behavior:"smooth"});}
+  function cancelForm(){setForm(ET);setEditingId(null);setShowForm(false);}
+  async function saveTripForm(){if(!form.destination||!form.startDate){alert("Please enter a destination and start date.");return;}setSaving(true);const next=editingId?(trips||[]).map(t=>t.id===editingId?{...form,id:editingId}:t):[...(trips||[]),{...form,id:Date.now().toString()}];await saveTrips(next);setSaving(false);cancelForm();}
+  async function deleteTrip(id){if(!window.confirm("Remove this trip?"))return;await saveTrips((trips||[]).filter(t=>t.id!==id));}
+  const TYPES=["🏖️ Beach","🏔️ Mountains","🏙️ City","🎿 Ski","🌲 National Park","🚢 Cruise","🌍 International","🎡 Theme Park","🏕️ Camping","👨‍👩‍👧‍👦 Family Visit"];
+  const sorted=[...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
+  const inp=(field,ph,type="text")=><input type={type} value={form[field]} onChange={e=>setForm(f=>({...f,[field]:e.target.value}))} placeholder={ph} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}/>;
+  return(
     <div>
       <h2 style={{fontSize:22,fontWeight:700,color:T.text,margin:"0 0 6px"}}>✈️ Trips</h2>
       <p style={{fontSize:13,color:T.muted,margin:"0 0 18px",fontFamily:"'Nunito',sans-serif"}}>Add your family trips. Each shows on the Trips page with a photo, countdown, and who's going.</p>
-      {showForm&&(
-        <div style={{background:T.white,borderRadius:16,border:`2px solid ${editingId?"#3B6FA0":T.border}`,padding:"18px 20px",marginBottom:20}}>
-          <h3 style={{fontSize:17,fontWeight:700,color:editingId?"#3B6FA0":T.text,margin:"0 0 16px"}}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
-          <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Destination *</label>{inp("destination","e.g. Outer Banks, Yellowstone")}</div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-            <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Start Date *</label>{inp("startDate","","date")}</div>
-            <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>End Date</label>{inp("endDate","","date")}</div>
-            <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Location / State</label>{inp("location","e.g. North Carolina")}</div>
-            <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Trip Type</label>
-              <select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}>
-                <option value="">Select type…</option>{TYPES.map(t=><option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          </div>
-          <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Photo Keyword</label>{inp("imageKeyword","e.g. outer banks beach, yellowstone bison")}</div>
-          <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Custom Photo URL <span style={{fontWeight:400,color:T.muted}}>(optional)</span></label>{inp("photoUrl","https://your-photo.jpg")}</div>
-          <div style={{marginBottom:16}}>
-            <label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:8}}>Who's Going?</label>
-            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{family.map(m=>{const on=(form.memberIds||[]).includes(m.id);return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,border:`2px solid ${on?m.color:T.border}`,background:on?m.color:"transparent",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:on?"#fff":T.sub}}>{m.emoji} {m.name}</button>;})}</div>
-          </div>
-          <div style={{display:"flex",gap:10}}>
-            <button onClick={saveTripForm} disabled={saving} style={{flex:1,padding:"12px",borderRadius:12,background:editingId?"#3B6FA0":T.text,color:"#fff",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
-            <button onClick={cancelForm} style={{padding:"12px 20px",borderRadius:12,background:T.stone,color:T.sub,border:"none",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:14}}>Cancel</button>
-          </div>
+      {showForm&&(<div style={{background:T.white,borderRadius:16,border:`2px solid ${editingId?"#3B6FA0":T.border}`,padding:"18px 20px",marginBottom:20}}>
+        <h3 style={{fontSize:17,fontWeight:700,color:editingId?"#3B6FA0":T.text,margin:"0 0 16px"}}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
+        <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Destination *</label>{inp("destination","e.g. Outer Banks, Yellowstone")}</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+          <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Start Date *</label>{inp("startDate","","date")}</div>
+          <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>End Date</label>{inp("endDate","","date")}</div>
+          <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Location / State</label>{inp("location","e.g. North Carolina")}</div>
+          <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Trip Type</label><select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}><option value="">Select type…</option>{TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select></div>
         </div>
-      )}
+        <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Photo Keyword</label>{inp("imageKeyword","e.g. outer banks beach, yellowstone bison")}</div>
+        <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Custom Photo URL <span style={{fontWeight:400,color:T.muted}}>(optional)</span></label>{inp("photoUrl","https://your-photo.jpg")}</div>
+        <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:8}}>Who's Going?</label><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{family.map(m=>{const on=(form.memberIds||[]).includes(m.id);return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,border:`2px solid ${on?m.color:T.border}`,background:on?m.color:"transparent",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:on?"#fff":T.sub}}>{m.emoji} {m.name}</button>;})}</div></div>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={saveTripForm} disabled={saving} style={{flex:1,padding:"12px",borderRadius:12,background:editingId?"#3B6FA0":T.text,color:"#fff",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
+          <button onClick={cancelForm} style={{padding:"12px 20px",borderRadius:12,background:T.stone,color:T.sub,border:"none",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:14}}>Cancel</button>
+        </div>
+      </div>)}
       {!showForm&&<button onClick={()=>{setEditingId(null);setForm(ET);setShowForm(true);}} style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderRadius:14,background:T.stone,border:`2px dashed ${T.border}`,cursor:"pointer",width:"100%",marginBottom:20,boxSizing:"border-box"}}><span style={{fontSize:20,color:T.muted}}>+</span><span style={{fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:600,color:T.sub}}>Add a trip</span></button>}
       {!sorted.length&&!showForm&&<div style={{textAlign:"center",padding:"32px",color:T.muted,fontFamily:"'Nunito',sans-serif"}}>No trips yet. Tap above to plan your first adventure!</div>}
-      {sorted.map(trip=>{
-        const days=tripDaysAway(trip.startDate),nights=tripNights(trip.startDate,trip.endDate);
-        return (
-          <div key={trip.id} style={{background:T.white,borderRadius:16,border:`1.5px solid ${T.border}`,marginBottom:10,overflow:"hidden"}}>
-            <div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px"}}>
-              <div style={{flex:1}}>
-                <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:17,fontWeight:700,color:T.text}}>{trip.destination}</div>
-                <div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted,marginTop:2}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>
-                {trip.location&&<div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.sub,marginTop:2}}>📍 {trip.location}</div>}
-                <div style={{display:"flex",gap:4,marginTop:6}}>{(trip.memberIds||[]).map(id=>{const m=family.find(x=>x.id===id);return m?<span key={id} style={{fontSize:16}}>{m.emoji}</span>:null;})}</div>
-              </div>
-              <div style={{textAlign:"center",minWidth:44}}>
-                {days===null?null:days<0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:T.muted}}>Past</div>:days===0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:"#2D7A56",fontWeight:700}}>Today!</div>:<><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:22,fontWeight:700,color:T.text,lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,color:T.muted}}>days</div></>}
-              </div>
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                <button onClick={()=>startEdit(trip)} style={{padding:"6px 12px",borderRadius:8,background:"#D6E8F7",color:"#3B6FA0",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Edit</button>
-                <button onClick={()=>deleteTrip(trip.id)} style={{padding:"6px 12px",borderRadius:8,background:"#FEE2E2",color:"#DC2626",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Remove</button>
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      {sorted.map(trip=>{const days=tripDaysAway(trip.startDate),nights=tripNights(trip.startDate,trip.endDate);return(<div key={trip.id} style={{background:T.white,borderRadius:16,border:`1.5px solid ${T.border}`,marginBottom:10,overflow:"hidden"}}><div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px"}}><div style={{flex:1}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:17,fontWeight:700,color:T.text}}>{trip.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted,marginTop:2}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>{trip.location&&<div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.sub,marginTop:2}}>📍 {trip.location}</div>}<div style={{display:"flex",gap:4,marginTop:6}}>{(trip.memberIds||[]).map(id=>{const m=family.find(x=>x.id===id);return m?<span key={id} style={{fontSize:16}}>{m.emoji}</span>:null;})}</div></div><div style={{textAlign:"center",minWidth:44}}>{days===null?null:days<0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:T.muted}}>Past</div>:days===0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:"#2D7A56",fontWeight:700}}>Today!</div>:<><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:22,fontWeight:700,color:T.text,lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,color:T.muted}}>days</div></>}</div><div style={{display:"flex",flexDirection:"column",gap:6}}><button onClick={()=>startEdit(trip)} style={{padding:"6px 12px",borderRadius:8,background:"#D6E8F7",color:"#3B6FA0",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Edit</button><button onClick={()=>deleteTrip(trip.id)} style={{padding:"6px 12px",borderRadius:8,background:"#FEE2E2",color:"#DC2626",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Remove</button></div></div></div>);})}
     </div>
   );
 }
@@ -1030,10 +879,11 @@ function CalendarPage({ family, events }) {
 function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowDay, viewDate }) {
   // Rainbow day: earned when all sections that HAVE tasks are fully completed
   // Sections with no tasks are skipped (e.g. empty Learn still allows rainbow)
-  const sectionsWithTasks = CORE_SECTIONS.filter(sec => (tasks[sec.id] || []).length > 0);
+  // CORE_SECTIONS = ["learn","exercise","contribute","goals"] — plain strings, not objects
+  const sectionsWithTasks = CORE_SECTIONS.filter(sec => (tasks[sec] || []).length > 0);
   const hasAnyCoreTasks = sectionsWithTasks.length > 0;
   const allSectionsWithTasksDone = sectionsWithTasks.every(sec =>
-    (tasks[sec.id] || []).every(t => !!(completions && completions[t.label + "|" + member.id]))
+    (tasks[sec] || []).every(t => !!(completions && completions[t.label + "|" + member.id]))
   );
   const isRainbow = hasAnyCoreTasks && allSectionsWithTasksDone;
 
@@ -2958,32 +2808,29 @@ function AppInner() {
 
     loadAll();
 
-    // ── Time-based alerts ────────────────────────────────────────────────────────
-    // Daily: 1:30pm, 1:50pm, 2:00pm (every day)
-    // Weekly: Pay Day at 5:00pm on Sundays only
-    const ALERT_TIMES = [
-      { key:"130pm",  h:13, m:30, daysOfWeek:null },
-      { key:"150pm",  h:13, m:50, daysOfWeek:null },
-      { key:"2pm",    h:14, m:0,  daysOfWeek:null },
-      { key:"payday", h:17, m:0,  daysOfWeek:[0]  }, // 0 = Sunday
+    const ALERT_TIMES=[
+      {key:"130pm",h:13,m:30,daysOfWeek:null},
+      {key:"150pm",h:13,m:50,daysOfWeek:null},
+      {key:"2pm",  h:14,m:0, daysOfWeek:null},
+      {key:"payday",h:17,m:0,daysOfWeek:[0]},
     ];
-    function checkAlertTimes() {
-      const now = new Date(new Date().toLocaleString("en-US", { timeZone:"America/Denver" }));
-      const h = now.getHours(), m = now.getMinutes(), dow = now.getDay();
-      const todayKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-      for (const alert of ALERT_TIMES) {
-        if (h === alert.h && m === alert.m) {
-          if (alert.daysOfWeek && !alert.daysOfWeek.includes(dow)) continue;
-          const alertKey = `${alert.key}-${todayKey}`;
-          setAlertDismissedFor(prev => {
-            if (prev[alertKey]) return prev;
+    function checkAlertTimes(){
+      const now=new Date(new Date().toLocaleString("en-US",{timeZone:"America/Denver"}));
+      const h=now.getHours(),m=now.getMinutes(),dow=now.getDay();
+      const todayKey=`${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
+      for(const alert of ALERT_TIMES){
+        if(h===alert.h&&m===alert.m){
+          if(alert.daysOfWeek&&!alert.daysOfWeek.includes(dow))continue;
+          const alertKey=`${alert.key}-${todayKey}`;
+          setAlertDismissedFor(prev=>{
+            if(prev[alertKey])return prev;
             setChecklistAlert(alert.key);
-            return { ...prev, [alertKey]: true };
+            return {...prev,[alertKey]:true};
           });
         }
       }
     }
-    const alertInterval = setInterval(checkAlertTimes, 30000);
+    const alertInterval=setInterval(checkAlertTimes,30000);
     checkAlertTimes();
 
     // Screensaver inactivity timer
@@ -3020,17 +2867,7 @@ function AppInner() {
 
   const goAdmin = () => { window.location.hash = "#admin"; };
 
-  const checklistAlertEl = checklistAlert ? (
-    <ChecklistAlert
-      type={checklistAlert}
-      family={family}
-      tasks={tasks}
-      choreAssignments={choreAssignments}
-      customChores={customChores}
-      completions={null}
-      onDismiss={() => setChecklistAlert(null)}
-    />
-  ) : null;
+  const checklistAlertEl = checklistAlert ? (<ChecklistAlert type={checklistAlert} family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores} completions={null} onDismiss={()=>setChecklistAlert(null)}/>) : null;
   const screensaverEl = screensaver && !checklistAlert ? <Screensaver onDismiss={() => setScreensaver(false)} message={screensaverMsg} /> : null;
 
   if (loading) return (
