@@ -187,7 +187,7 @@ const DAY_THEMES = {
 const SECTIONS = [
   { id:"learn",      label:"Learn",      icon:"📖", color:"#4D96FF", light:"#E0EDFF", grad:"linear-gradient(135deg,#4D96FF,#74AFFF)" },
   { id:"exercise",   label:"Exercise",   icon:"💪", color:"#6BCB77", light:"#E5F7E8", grad:"linear-gradient(135deg,#6BCB77,#8FD98A)" },
-  { id:"contribute", label:"Contribute", icon:"🤝", color:"#FF9F45", light:"#FFF0E0", grad:"linear-gradient(135deg,#FF9F45,#FFB86C)" },
+  { id:"contribute", label:"Chores", icon:"🤝", color:"#FF9F45", light:"#FFF0E0", grad:"linear-gradient(135deg,#FF9F45,#FFB86C)" },
   { id:"goals",      label:"Goals",      icon:"🎯", color:"#C77DFF", light:"#F3E5FF", grad:"linear-gradient(135deg,#C77DFF,#D99FFF)" },
   { id:"bonus",      label:"Bonus",      icon:"⭐", color:"#FFD700", light:"#FFFBE6", grad:"linear-gradient(135deg,#FFD700,#FFE97A)" },
   { id:"open",       label:"Open Tasks", icon:"📋", color:"#6B8CFF", light:"#E8ECFF", grad:"linear-gradient(135deg,#6B8CFF,#8DA3FF)" },
@@ -484,40 +484,23 @@ function Screensaver({ onDismiss, message }) {
 }
 
 
-// ════════════════════════════════════════════════════════════════════════════
-// WEEK PAGE
-// Shows Mon–Sun of the current week, one member at a time.
-// Only outstanding (incomplete) tasks are shown per section.
-// Tasks are checkable but only award points when done on their assigned day.
-// ════════════════════════════════════════════════════════════════════════════
-
 function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allCompletions }) {
   const today = getMountainToday();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
-
-  // Default to first defaultOn kid
   const kids = family.filter(m => m.defaultOn);
   const [activeMemberId, setActiveMemberId] = useState(kids[0]?.id || family[0]?.id);
   const activeMember = family.find(m => m.id === activeMemberId) || family[0];
 
-  // Build the Mon–Sun week containing today
   const weekDays = (() => {
     const days = [];
-    // Find Monday of this week (getDay: 0=Sun, 1=Mon ... 6=Sat)
     const mon = new Date(today);
-    mon.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // roll back to Monday
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(mon);
-      d.setDate(mon.getDate() + i);
-      days.push(d);
-    }
+    mon.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+    for (let i = 0; i < 7; i++) { const d = new Date(mon); d.setDate(mon.getDate() + i); days.push(d); }
     return days;
   })();
 
-  // Completions state: keyed by dateStr → { "label|memberId": true }
   const [completionsByDate, setCompletionsByDate] = useState({});
 
-  // Load completions for the whole week on mount / member change
   useEffect(() => {
     async function loadWeek() {
       const map = {};
@@ -532,32 +515,22 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
     loadWeek();
   }, [activeMemberId]);
 
-  // Toggle a task — marks done but only on its actual assigned date for points
   async function toggleTask(label, dateStr) {
     const key = label + "|" + activeMemberId;
     const isDone = !!(completionsByDate[dateStr] && completionsByDate[dateStr][key]);
     if (isDone) {
       await SB.deleteCompletion(label, activeMemberId, dateStr);
-      setCompletionsByDate(prev => {
-        const next = { ...prev, [dateStr]: { ...prev[dateStr] } };
-        delete next[dateStr][key];
-        return next;
-      });
+      setCompletionsByDate(prev => { const next={...prev,[dateStr]:{...prev[dateStr]}}; delete next[dateStr][key]; return next; });
     } else {
       await SB.addCompletion(label, activeMemberId, dateStr);
-      setCompletionsByDate(prev => ({
-        ...prev,
-        [dateStr]: { ...(prev[dateStr]||{}), [key]: true }
-      }));
+      setCompletionsByDate(prev => ({ ...prev, [dateStr]: { ...(prev[dateStr]||{}), [key]: true } }));
     }
   }
 
-  // Build tasks for a given date (same logic as TodayPage)
   function getTasksForDate(date) {
     const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
     const dbMemberTasks = dbTasks[activeMemberId] || {};
     const choreTasks = getContributeTasksForMember(activeMemberId, date, choreAssignments, customChores);
-
     function filterByDate(list) {
       return (list||[]).filter(t => {
         if (!t.recurrence || t.recurrence === "daily") return true;
@@ -566,7 +539,6 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
         return true;
       });
     }
-
     return {
       learn:      filterByDate(dbMemberTasks.learn),
       exercise:   filterByDate(dbMemberTasks.exercise),
@@ -582,8 +554,6 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
 
   return (
     <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif" }}>
-
-      {/* Header — member selector */}
       <div style={{ borderBottom:`2px solid ${T.border}`, padding:"10px 14px 10px", flexShrink:0, background:T.white }}>
         <div style={{ fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>📋 Week View</div>
         <div style={{ display:"flex", gap:6, overflowX:"auto" }}>
@@ -592,10 +562,7 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
             return (
               <button key={m.id} onClick={() => setActiveMemberId(m.id)}
                 style={{ display:"flex", alignItems:"center", gap:5, padding:"6px 14px", borderRadius:99, flexShrink:0, cursor:"pointer", transition:"all 0.15s",
-                  background: on ? m.color : T.stone,
-                  border: on ? `2px solid ${m.color}` : "2px solid transparent",
-                  color: on ? "#fff" : T.muted,
-                }}>
+                  background: on ? m.color : T.stone, border: on ? `2px solid ${m.color}` : "2px solid transparent", color: on ? "#fff" : T.muted }}>
                 <span style={{ fontSize:14 }}>{m.emoji}</span>
                 <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>{m.name}</span>
               </button>
@@ -603,8 +570,6 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
           })}
         </div>
       </div>
-
-      {/* Scrollable week columns */}
       <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", alignItems:"stretch" }}>
         {weekDays.map(date => {
           const dStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
@@ -612,106 +577,44 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
           const isPast  = dStr < todayStr;
           const dayTasks = getTasksForDate(date);
           const dayCompletions = completionsByDate[dStr] || {};
-
-          // Count outstanding tasks across all sections
-          const allSections = SECTIONS.filter(sec => {
-            const items = dayTasks[sec.id] || [];
-            return items.length > 0;
-          });
-          const outstandingCount = allSections.reduce((sum, sec) => {
-            const items = dayTasks[sec.id] || [];
-            return sum + items.filter(t => !dayCompletions[t.label + "|" + activeMemberId]).length;
-          }, 0);
+          const allSections = SECTIONS.filter(sec => (dayTasks[sec.id]||[]).length > 0);
+          const outstandingCount = allSections.reduce((sum, sec) => sum + (dayTasks[sec.id]||[]).filter(t => !dayCompletions[t.label+"|"+activeMemberId]).length, 0);
           const allDone = allSections.length > 0 && outstandingCount === 0;
-
           return (
-            <div key={dStr} style={{
-              minWidth: 200, maxWidth: 240, flex:"0 0 200px",
-              display:"flex", flexDirection:"column",
-              borderRight:`2px solid ${T.border}`,
-              background: isToday ? `${activeMember.color}0A` : isPast ? "#FAFAF8" : T.bg,
-            }}>
-              {/* Day header */}
-              <div style={{
-                padding:"10px 10px 8px", flexShrink:0, position:"sticky", top:0, zIndex:5,
-                background: isToday ? activeMember.color : isPast ? T.stone : T.white,
-                borderBottom:`2px solid ${isToday ? activeMember.color : T.border}`,
-              }}>
-                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700,
-                  color: isToday ? "#fff" : isPast ? T.muted : T.text }}>
-                  {DAY_LABELS[date.getDay()]}
-                </div>
-                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11,
-                  color: isToday ? "rgba(255,255,255,0.8)" : T.muted }}>
-                  {MONTH_LABELS[date.getMonth()]} {date.getDate()}
-                </div>
+            <div key={dStr} style={{ minWidth:200, maxWidth:240, flex:"0 0 200px", display:"flex", flexDirection:"column", borderRight:`2px solid ${T.border}`, background: isToday ? `${activeMember.color}0A` : isPast ? "#FAFAF8" : T.bg }}>
+              <div style={{ padding:"10px 10px 8px", flexShrink:0, position:"sticky", top:0, zIndex:5, background: isToday ? activeMember.color : isPast ? T.stone : T.white, borderBottom:`2px solid ${isToday ? activeMember.color : T.border}` }}>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color: isToday ? "#fff" : isPast ? T.muted : T.text }}>{DAY_LABELS[date.getDay()]}</div>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color: isToday ? "rgba(255,255,255,0.8)" : T.muted }}>{MONTH_LABELS[date.getMonth()]} {date.getDate()}</div>
                 {allSections.length > 0 && (
-                  <div style={{ marginTop:5, fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700,
-                    color: isToday ? "rgba(255,255,255,0.85)" : allDone ? "#2D7A56" : T.muted }}>
+                  <div style={{ marginTop:5, fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700, color: isToday ? "rgba(255,255,255,0.85)" : allDone ? "#2D7A56" : T.muted }}>
                     {allDone ? "✅ All done!" : `${outstandingCount} left`}
                   </div>
                 )}
               </div>
-
-              {/* Sections */}
               <div style={{ flex:1, overflowY:"auto", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch" }}>
-                {allSections.length === 0 && (
-                  <div style={{ padding:"20px 8px", textAlign:"center", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:11 }}>No tasks</div>
-                )}
+                {allSections.length === 0 && <div style={{ padding:"20px 8px", textAlign:"center", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:11 }}>No tasks</div>}
                 {SECTIONS.map(sec => {
                   const allItems = dayTasks[sec.id] || [];
                   if (allItems.length === 0) return null;
-
-                  // Only show outstanding (incomplete) tasks
-                  const outstanding = allItems.filter(t => !dayCompletions[t.label + "|" + activeMemberId]);
-                  const done = outstanding.length === 0;
-
-                  // Hide section entirely if all done (no outstanding tasks)
-                  if (done && sec.id !== "bonus" && sec.id !== "open") return null;
-
-                  // For bonus/open: show outstanding only, hide section if none
-                  const tasksToShow = outstanding;
-                  if (tasksToShow.length === 0) return null;
-
+                  const outstanding = allItems.filter(t => !dayCompletions[t.label+"|"+activeMemberId]);
+                  if (outstanding.length === 0) return null;
                   return (
                     <div key={sec.id} style={{ marginBottom:8 }}>
-                      {/* Section header */}
-                      <div style={{
-                        borderRadius:"10px 10px 0 0", padding:"6px 8px 4px",
-                        background: T.white, border:`2px solid ${T.border}`, borderBottom:"none",
-                        display:"flex", alignItems:"center", gap:5,
-                      }}>
+                      <div style={{ borderRadius:"10px 10px 0 0", padding:"6px 8px 4px", background:T.white, border:`2px solid ${T.border}`, borderBottom:"none", display:"flex", alignItems:"center", gap:5 }}>
                         <span style={{ fontSize:14 }}>{sec.icon}</span>
                         <span style={{ fontFamily:"'Fredoka',sans-serif", fontWeight:700, fontSize:12, color:T.text, flex:1 }}>{sec.label}</span>
-                        <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:9, fontWeight:700, color:sec.color }}>{tasksToShow.length} left</span>
+                        <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:9, fontWeight:700, color:sec.color }}>{outstanding.length} left</span>
                       </div>
-                      {/* Outstanding tasks */}
                       <div style={{ background:T.white, border:`2px solid ${T.border}`, borderTop:"none", borderRadius:"0 0 10px 10px", padding:"4px 6px 6px" }}>
-                        {tasksToShow.map(task => (
-                          <div key={task.label}
-                            onClick={() => toggleTask(task.label, dStr)}
-                            style={{
-                              display:"flex", alignItems:"center", gap:6, padding:"6px 6px",
-                              borderRadius:8, marginTop:3, cursor:"pointer",
-                              background:"transparent", transition:"background 0.1s",
-                            }}>
-                            <div style={{
-                              width:18, height:18, borderRadius:"50%", flexShrink:0,
-                              border:`2px solid ${sec.color}`, background:"transparent",
-                              display:"flex", alignItems:"center", justifyContent:"center",
-                            }} />
+                        {outstanding.map(task => (
+                          <div key={task.label} onClick={() => toggleTask(task.label, dStr)}
+                            style={{ display:"flex", alignItems:"center", gap:6, padding:"6px 6px", borderRadius:8, marginTop:3, cursor:"pointer" }}>
+                            <div style={{ width:18, height:18, borderRadius:"50%", flexShrink:0, border:`2px solid ${sec.color}`, background:"transparent", display:"flex", alignItems:"center", justifyContent:"center" }} />
                             <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:600, color:T.text, lineHeight:1.3 }}>{task.label}</span>
-                            {task.bonusPoints > 0 && (
-                              <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:10, fontWeight:700, color:"#92700A", background:"#FFFBE6", borderRadius:99, padding:"1px 5px", flexShrink:0 }}>+{task.bonusPoints}pt</span>
-                            )}
+                            {task.bonusPoints > 0 && <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:10, fontWeight:700, color:"#92700A", background:"#FFFBE6", borderRadius:99, padding:"1px 5px", flexShrink:0 }}>+{task.bonusPoints}pt</span>}
                           </div>
                         ))}
-                        {/* Note: late completions don't earn points */}
-                        {isPast && (
-                          <div style={{ textAlign:"center", padding:"3px 0 1px", fontFamily:"'Nunito',sans-serif", fontSize:9, color:T.muted, fontStyle:"italic" }}>
-                            No points for late tasks
-                          </div>
-                        )}
+                        {isPast && <div style={{ textAlign:"center", padding:"3px 0 1px", fontFamily:"'Nunito',sans-serif", fontSize:9, color:T.muted, fontStyle:"italic" }}>No points for late tasks</div>}
                       </div>
                     </div>
                   );
@@ -1578,7 +1481,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
     rainbow:    { bg:"#F3E5FF", border:"#C77DFF44", text:"#7B3FA0", label:"🌈 Rainbow Days" },
     learn:      { bg:"#E0EDFF", border:"#4D96FF44", text:"#2A5FA8", label:"📖 Learn" },
     exercise:   { bg:"#E5F7E8", border:"#6BCB7744", text:"#2D7A3D", label:"💪 Exercise" },
-    contribute: { bg:"#FFF0E0", border:"#FF9F4544", text:"#A85A00", label:"🤝 Contribute" },
+    contribute: { bg:"#FFF0E0", border:"#FF9F4544", text:"#A85A00", label:"🤝 Chores" },
     goals:      { bg:"#FFF0F8", border:"#FF69B444", text:"#A0306A", label:"🎯 Goals" },
   };
 
