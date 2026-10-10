@@ -484,6 +484,248 @@ function Screensaver({ onDismiss, message }) {
 }
 
 
+// ════════════════════════════════════════════════════════════════════════════
+// WEEK PAGE
+// Shows Mon–Sun of the current week, one member at a time.
+// Only outstanding (incomplete) tasks are shown per section.
+// Tasks are checkable but only award points when done on their assigned day.
+// ════════════════════════════════════════════════════════════════════════════
+
+function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allCompletions }) {
+  const today = getMountainToday();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+
+  // Default to first defaultOn kid
+  const kids = family.filter(m => m.defaultOn);
+  const [activeMemberId, setActiveMemberId] = useState(kids[0]?.id || family[0]?.id);
+  const activeMember = family.find(m => m.id === activeMemberId) || family[0];
+
+  // Build the Mon–Sun week containing today
+  const weekDays = (() => {
+    const days = [];
+    // Find Monday of this week (getDay: 0=Sun, 1=Mon ... 6=Sat)
+    const mon = new Date(today);
+    mon.setDate(today.getDate() - ((today.getDay() + 6) % 7)); // roll back to Monday
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(mon);
+      d.setDate(mon.getDate() + i);
+      days.push(d);
+    }
+    return days;
+  })();
+
+  // Completions state: keyed by dateStr → { "label|memberId": true }
+  const [completionsByDate, setCompletionsByDate] = useState({});
+
+  // Load completions for the whole week on mount / member change
+  useEffect(() => {
+    async function loadWeek() {
+      const map = {};
+      await Promise.all(weekDays.map(async d => {
+        const dStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+        const rows = await SB.getCompletions(dStr).catch(() => []);
+        map[dStr] = {};
+        (rows||[]).forEach(r => { map[dStr][r.task_label + "|" + r.member_id] = true; });
+      }));
+      setCompletionsByDate(map);
+    }
+    loadWeek();
+  }, [activeMemberId]);
+
+  // Toggle a task — marks done but only on its actual assigned date for points
+  async function toggleTask(label, dateStr) {
+    const key = label + "|" + activeMemberId;
+    const isDone = !!(completionsByDate[dateStr] && completionsByDate[dateStr][key]);
+    if (isDone) {
+      await SB.deleteCompletion(label, activeMemberId, dateStr);
+      setCompletionsByDate(prev => {
+        const next = { ...prev, [dateStr]: { ...prev[dateStr] } };
+        delete next[dateStr][key];
+        return next;
+      });
+    } else {
+      await SB.addCompletion(label, activeMemberId, dateStr);
+      setCompletionsByDate(prev => ({
+        ...prev,
+        [dateStr]: { ...(prev[dateStr]||{}), [key]: true }
+      }));
+    }
+  }
+
+  // Build tasks for a given date (same logic as TodayPage)
+  function getTasksForDate(date) {
+    const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    const dbMemberTasks = dbTasks[activeMemberId] || {};
+    const choreTasks = getContributeTasksForMember(activeMemberId, date, choreAssignments, customChores);
+
+    function filterByDate(list) {
+      return (list||[]).filter(t => {
+        if (!t.recurrence || t.recurrence === "daily") return true;
+        if (t.recurrence === "weekly") return (t.dows||[]).includes(date.getDay());
+        if (t.recurrence === "once") return t.specificDate === dateStr;
+        return true;
+      });
+    }
+
+    return {
+      learn:      filterByDate(dbMemberTasks.learn),
+      exercise:   filterByDate(dbMemberTasks.exercise),
+      contribute: choreTasks.length > 0 ? choreTasks : filterByDate(dbMemberTasks.contribute),
+      goals:      filterByDate(dbMemberTasks.goals),
+      bonus:      filterByDate(dbMemberTasks.bonus),
+      open:       dbMemberTasks.open || [],
+    };
+  }
+
+  const DAY_LABELS = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", fontFamily:"'Fredoka',sans-serif" }}>
+
+      {/* Header — member selector */}
+      <div style={{ borderBottom:`2px solid ${T.border}`, padding:"10px 14px 10px", flexShrink:0, background:T.white }}>
+        <div style={{ fontSize:22, fontWeight:700, color:T.text, marginBottom:8 }}>📋 Week View</div>
+        <div style={{ display:"flex", gap:6, overflowX:"auto" }}>
+          {kids.map(m => {
+            const on = m.id === activeMemberId;
+            return (
+              <button key={m.id} onClick={() => setActiveMemberId(m.id)}
+                style={{ display:"flex", alignItems:"center", gap:5, padding:"6px 14px", borderRadius:99, flexShrink:0, cursor:"pointer", transition:"all 0.15s",
+                  background: on ? m.color : T.stone,
+                  border: on ? `2px solid ${m.color}` : "2px solid transparent",
+                  color: on ? "#fff" : T.muted,
+                }}>
+                <span style={{ fontSize:14 }}>{m.emoji}</span>
+                <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700 }}>{m.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Scrollable week columns */}
+      <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", alignItems:"stretch" }}>
+        {weekDays.map(date => {
+          const dStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+          const isToday = dStr === todayStr;
+          const isPast  = dStr < todayStr;
+          const dayTasks = getTasksForDate(date);
+          const dayCompletions = completionsByDate[dStr] || {};
+
+          // Count outstanding tasks across all sections
+          const allSections = SECTIONS.filter(sec => {
+            const items = dayTasks[sec.id] || [];
+            return items.length > 0;
+          });
+          const outstandingCount = allSections.reduce((sum, sec) => {
+            const items = dayTasks[sec.id] || [];
+            return sum + items.filter(t => !dayCompletions[t.label + "|" + activeMemberId]).length;
+          }, 0);
+          const allDone = allSections.length > 0 && outstandingCount === 0;
+
+          return (
+            <div key={dStr} style={{
+              minWidth: 200, maxWidth: 240, flex:"0 0 200px",
+              display:"flex", flexDirection:"column",
+              borderRight:`2px solid ${T.border}`,
+              background: isToday ? `${activeMember.color}0A` : isPast ? "#FAFAF8" : T.bg,
+            }}>
+              {/* Day header */}
+              <div style={{
+                padding:"10px 10px 8px", flexShrink:0, position:"sticky", top:0, zIndex:5,
+                background: isToday ? activeMember.color : isPast ? T.stone : T.white,
+                borderBottom:`2px solid ${isToday ? activeMember.color : T.border}`,
+              }}>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700,
+                  color: isToday ? "#fff" : isPast ? T.muted : T.text }}>
+                  {DAY_LABELS[date.getDay()]}
+                </div>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11,
+                  color: isToday ? "rgba(255,255,255,0.8)" : T.muted }}>
+                  {MONTH_LABELS[date.getMonth()]} {date.getDate()}
+                </div>
+                {allSections.length > 0 && (
+                  <div style={{ marginTop:5, fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700,
+                    color: isToday ? "rgba(255,255,255,0.85)" : allDone ? "#2D7A56" : T.muted }}>
+                    {allDone ? "✅ All done!" : `${outstandingCount} left`}
+                  </div>
+                )}
+              </div>
+
+              {/* Sections */}
+              <div style={{ flex:1, overflowY:"auto", padding:"8px 8px 12px", WebkitOverflowScrolling:"touch" }}>
+                {allSections.length === 0 && (
+                  <div style={{ padding:"20px 8px", textAlign:"center", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:11 }}>No tasks</div>
+                )}
+                {SECTIONS.map(sec => {
+                  const allItems = dayTasks[sec.id] || [];
+                  if (allItems.length === 0) return null;
+
+                  // Only show outstanding (incomplete) tasks
+                  const outstanding = allItems.filter(t => !dayCompletions[t.label + "|" + activeMemberId]);
+                  const done = outstanding.length === 0;
+
+                  // Hide section entirely if all done (no outstanding tasks)
+                  if (done && sec.id !== "bonus" && sec.id !== "open") return null;
+
+                  // For bonus/open: show outstanding only, hide section if none
+                  const tasksToShow = outstanding;
+                  if (tasksToShow.length === 0) return null;
+
+                  return (
+                    <div key={sec.id} style={{ marginBottom:8 }}>
+                      {/* Section header */}
+                      <div style={{
+                        borderRadius:"10px 10px 0 0", padding:"6px 8px 4px",
+                        background: T.white, border:`2px solid ${T.border}`, borderBottom:"none",
+                        display:"flex", alignItems:"center", gap:5,
+                      }}>
+                        <span style={{ fontSize:14 }}>{sec.icon}</span>
+                        <span style={{ fontFamily:"'Fredoka',sans-serif", fontWeight:700, fontSize:12, color:T.text, flex:1 }}>{sec.label}</span>
+                        <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:9, fontWeight:700, color:sec.color }}>{tasksToShow.length} left</span>
+                      </div>
+                      {/* Outstanding tasks */}
+                      <div style={{ background:T.white, border:`2px solid ${T.border}`, borderTop:"none", borderRadius:"0 0 10px 10px", padding:"4px 6px 6px" }}>
+                        {tasksToShow.map(task => (
+                          <div key={task.label}
+                            onClick={() => toggleTask(task.label, dStr)}
+                            style={{
+                              display:"flex", alignItems:"center", gap:6, padding:"6px 6px",
+                              borderRadius:8, marginTop:3, cursor:"pointer",
+                              background:"transparent", transition:"background 0.1s",
+                            }}>
+                            <div style={{
+                              width:18, height:18, borderRadius:"50%", flexShrink:0,
+                              border:`2px solid ${sec.color}`, background:"transparent",
+                              display:"flex", alignItems:"center", justifyContent:"center",
+                            }} />
+                            <span style={{ flex:1, fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:600, color:T.text, lineHeight:1.3 }}>{task.label}</span>
+                            {task.bonusPoints > 0 && (
+                              <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:10, fontWeight:700, color:"#92700A", background:"#FFFBE6", borderRadius:99, padding:"1px 5px", flexShrink:0 }}>+{task.bonusPoints}pt</span>
+                            )}
+                          </div>
+                        ))}
+                        {/* Note: late completions don't earn points */}
+                        {isPast && (
+                          <div style={{ textAlign:"center", padding:"3px 0 1px", fontFamily:"'Nunito',sans-serif", fontSize:9, color:T.muted, fontStyle:"italic" }}>
+                            No points for late tasks
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
 function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, completions, onDismiss }) {
   const [pulse, setPulse] = useState(true);
   useEffect(() => { const i=setInterval(()=>setPulse(p=>!p),type==="2pm"?800:1200); return ()=>clearInterval(i); }, [type]);
@@ -501,16 +743,8 @@ function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, c
     const today=getMountainToday();
     const memberTasks=tasks[member.id]||{};
     const choreTasks=getContributeTasksForMember(member.id,today,choreAssignments,customChores);
-    return [
-      {label:"School",  items:memberTasks.learn||[]},
-      {label:"Exercise",items:memberTasks.exercise||[]},
-      {label:"Chores",  items:choreTasks},
-      {label:"Goals",   items:memberTasks.goals||[]},
-    ].map(sec=>{
-      if(!sec.items.length)return null;
-      const allDone=sec.items.every(t=>completions&&completions[t.label+"|"+member.id]);
-      return {...sec,allDone};
-    }).filter(Boolean);
+    return [{label:"School",items:memberTasks.learn||[]},{label:"Exercise",items:memberTasks.exercise||[]},{label:"Chores",items:choreTasks},{label:"Goals",items:memberTasks.goals||[]}]
+      .map(sec=>{if(!sec.items.length)return null;const allDone=sec.items.every(t=>completions&&completions[t.label+"|"+member.id]);return {...sec,allDone};}).filter(Boolean);
   }
   const kids=family.filter(m=>m.defaultOn);
   return (
@@ -522,36 +756,15 @@ function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, c
         <div style={{fontFamily:"'Nunito',sans-serif",fontSize:type==="payday"?28:22,fontWeight:700,color:"rgba(255,255,255,0.9)",marginTop:16}}>{config.sub}</div>
         <div style={{fontFamily:"'Nunito',sans-serif",fontSize:15,color:"rgba(255,255,255,0.45)",marginTop:8}}>{config.detail}</div>
       </div>
-      {type==="2pm"&&(
-        <div style={{position:"relative",zIndex:1,display:"flex",gap:16,flexWrap:"wrap",justifyContent:"center",width:"100%",maxWidth:900,marginTop:24}}>
-          {kids.map(member=>{
-            const sections=getMemberStatus(member);
-            const allDone=sections.every(s=>s.allDone);
-            return (
-              <div key={member.id} style={{background:allDone?"rgba(45,122,86,0.35)":"rgba(255,255,255,0.08)",border:`2px solid ${allDone?"#4ade80":"rgba(255,255,255,0.15)"}`,borderRadius:20,padding:"18px 22px",minWidth:180,flex:"1 1 160px"}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
-                  <span style={{fontSize:28}}>{member.emoji}</span>
-                  <div>
-                    <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:20,fontWeight:700,color:"#fff"}}>{member.name}</div>
-                    <div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:allDone?"#4ade80":"rgba(255,255,255,0.5)"}}>{allDone?"✅ All done!":`${sections.filter(s=>s.allDone).length}/${sections.length} sections`}</div>
-                  </div>
-                </div>
-                {sections.map(sec=>(
-                  <div key={sec.label} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                    <div style={{width:20,height:20,borderRadius:"50%",flexShrink:0,background:sec.allDone?"#4ade80":"rgba(255,255,255,0.15)",border:`2px solid ${sec.allDone?"#4ade80":"rgba(255,255,255,0.3)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11}}>{sec.allDone?"✓":""}</div>
-                    <span style={{fontFamily:"'Nunito',sans-serif",fontSize:13,fontWeight:600,color:sec.allDone?"rgba(255,255,255,0.6)":"#fff",textDecoration:sec.allDone?"line-through":"none"}}>{sec.label}</span>
-                  </div>
-                ))}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <div style={{position:"relative",zIndex:1,fontFamily:"'Nunito',sans-serif",fontSize:13,color:"rgba(255,255,255,0.3)",marginTop:32}}>
-        Tap anywhere to dismiss
-        {type==="130pm"&&" · auto-dismisses in 5 minutes"}
-        {type==="150pm"&&" · auto-dismisses in 1 minute"}
-      </div>
+      {type==="2pm"&&(<div style={{position:"relative",zIndex:1,display:"flex",gap:16,flexWrap:"wrap",justifyContent:"center",width:"100%",maxWidth:900,marginTop:24}}>
+        {kids.map(member=>{const sections=getMemberStatus(member);const allDone=sections.every(s=>s.allDone);return(
+          <div key={member.id} style={{background:allDone?"rgba(45,122,86,0.35)":"rgba(255,255,255,0.08)",border:`2px solid ${allDone?"#4ade80":"rgba(255,255,255,0.15)"}`,borderRadius:20,padding:"18px 22px",minWidth:180,flex:"1 1 160px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}><span style={{fontSize:28}}>{member.emoji}</span><div><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:20,fontWeight:700,color:"#fff"}}>{member.name}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:allDone?"#4ade80":"rgba(255,255,255,0.5)"}}>{allDone?"✅ All done!":`${sections.filter(s=>s.allDone).length}/${sections.length} sections`}</div></div></div>
+            {sections.map(sec=>(<div key={sec.label} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}><div style={{width:20,height:20,borderRadius:"50%",flexShrink:0,background:sec.allDone?"#4ade80":"rgba(255,255,255,0.15)",border:`2px solid ${sec.allDone?"#4ade80":"rgba(255,255,255,0.3)"}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11}}>{sec.allDone?"✓":""}</div><span style={{fontFamily:"'Nunito',sans-serif",fontSize:13,fontWeight:600,color:sec.allDone?"rgba(255,255,255,0.6)":"#fff",textDecoration:sec.allDone?"line-through":"none"}}>{sec.label}</span></div>))}
+          </div>
+        );})}
+      </div>)}
+      <div style={{position:"relative",zIndex:1,fontFamily:"'Nunito',sans-serif",fontSize:13,color:"rgba(255,255,255,0.3)",marginTop:32}}>Tap anywhere to dismiss{type==="130pm"&&" · auto-dismisses in 5 minutes"}{type==="150pm"&&" · auto-dismisses in 1 minute"}</div>
     </div>
   );
 }
@@ -561,42 +774,18 @@ function formatTripDates(s,e){if(!s)return "";const o={month:"short",day:"numeri
 function tripNights(s,e){if(!s||!e)return 0;return Math.round((new Date(e+"T00:00:00")-new Date(s+"T00:00:00"))/(1000*60*60*24));}
 function tripImageUrl(trip){if(trip.photoUrl)return trip.photoUrl;return `https://source.unsplash.com/featured/800x600?${encodeURIComponent(trip.imageKeyword||trip.destination||"travel")}`;}
 function TripsPage({trips,family}){
-  const memberMap=Object.fromEntries(family.map(m=>[m.id,m]));
-  const today=getMountainToday();
+  const memberMap=Object.fromEntries(family.map(m=>[m.id,m]));const today=getMountainToday();
   const sorted=[...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
   const upcoming=sorted.filter(t=>!t.startDate||new Date(t.startDate+"T00:00:00")>=today);
   const past=sorted.filter(t=>t.startDate&&new Date(t.startDate+"T00:00:00")<today);
   if(!sorted.length)return(<div style={{padding:"80px 24px",textAlign:"center",fontFamily:"'Fredoka',sans-serif"}}><div style={{fontSize:64,marginBottom:16}}>✈️</div><div style={{fontSize:22,fontWeight:700,color:T.text,marginBottom:8}}>No trips yet!</div><div style={{fontSize:15,color:T.muted}}>Go to Admin → Trips to add your first adventure.</div></div>);
   const [next,...rest]=upcoming;
-  return(
-    <div style={{paddingBottom:T.navH+16,background:T.bg,minHeight:"100vh"}}>
-      <div style={{padding:"14px 12px 10px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:24,fontWeight:700,color:T.text}}>✈️ Family Trips</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted}}>{upcoming.length} upcoming · {past.length} completed</div></div>
-      {next&&(()=>{
-        const days=tripDaysAway(next.startDate),nights=tripNights(next.startDate,next.endDate);
-        const members=(next.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);
-        return(<div style={{margin:"0 10px 12px",borderRadius:22,overflow:"hidden",position:"relative",height:300,boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}>
-          <div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(next)})`,backgroundSize:"cover",backgroundPosition:"center"}}/>
-          <div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.08) 0%,rgba(0,0,0,0.45) 55%,rgba(0,0,0,0.85) 100%)"}}/>
-          <div style={{position:"absolute",top:0,left:0,right:0,zIndex:2,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-            <div style={{background:"rgba(255,255,255,0.22)",backdropFilter:"blur(6px)",borderRadius:99,padding:"4px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:11,fontWeight:700,color:"#fff",letterSpacing:1}}>NEXT UP</div>
-            {days!==null&&days>=0&&<div style={{textAlign:"center",background:"rgba(0,0,0,0.35)",backdropFilter:"blur(8px)",borderRadius:14,padding:"8px 14px",border:"1px solid rgba(255,255,255,0.2)"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:44,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,fontWeight:700,color:"rgba(255,255,255,0.9)",letterSpacing:1.2,textTransform:"uppercase"}}>days away</div></div>}
-            {days!==null&&days<0&&<div style={{background:"#2D7A56",borderRadius:14,padding:"7px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>Happening now! 🎉</div>}
-          </div>
-          <div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:2,padding:"16px"}}>
-            <div style={{fontFamily:"'Fredoka',sans-serif",fontSize:28,fontWeight:700,color:"#fff",lineHeight:1.15,textShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>{next.destination}</div>
-            <div style={{fontFamily:"'Nunito',sans-serif",fontSize:13,color:"rgba(255,255,255,0.9)",marginTop:3,marginBottom:10}}>{formatTripDates(next.startDate,next.endDate)}{nights>0?` · ${nights} night${nights!==1?"s":""}`:""}</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
-              {next.location&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>📍 {next.location}</div>}
-              {next.tripType&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>{next.tripType}</div>}
-              {members.length>0&&<div style={{display:"flex",gap:3,marginLeft:"auto"}}>{members.map(m=><div key={m.id} style={{width:26,height:26,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"2px solid rgba(255,255,255,0.65)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>{m.emoji}</div>)}</div>}
-            </div>
-          </div>
-        </div>);
-      })()}
-      {rest.length>0&&(<div style={{padding:"0 10px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.sub,marginBottom:8,letterSpacing:.6}}>COMING UP</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:12}}>{rest.map(trip=>{const days=tripDaysAway(trip.startDate);const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);return(<div key={trip.id} style={{borderRadius:12,overflow:"hidden",position:"relative",aspectRatio:"1/1",boxShadow:"0 2px 8px rgba(0,0,0,0.14)"}}><div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center"}}/><div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.0) 0%,rgba(0,0,0,0.72) 100%)"}}/><div style={{position:"absolute",inset:0,zIndex:2,padding:"5px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}>{days!==null&&days>=0&&<div style={{alignSelf:"flex-end",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(3px)",borderRadius:7,padding:"2px 5px",textAlign:"center",border:"1px solid rgba(255,255,255,0.15)"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:7,fontWeight:700,color:"rgba(255,255,255,0.85)",letterSpacing:.6,textTransform:"uppercase"}}>days</div></div>}<div><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff",lineHeight:1.2,textShadow:"0 1px 4px rgba(0,0,0,0.7)"}}>{trip.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,color:"rgba(255,255,255,0.85)",marginTop:1}}>{formatTripDates(trip.startDate,trip.endDate)}</div>{members.length>0&&<div style={{display:"flex",gap:2,marginTop:3}}>{members.map(m=><div key={m.id} style={{width:14,height:14,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8}}>{m.emoji}</div>)}</div>}</div></div></div>);})}</div></div>)}
-      {past.length>0&&(<div style={{padding:"0 10px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.muted,marginBottom:8,letterSpacing:.6}}>MEMORIES</div>{[...past].reverse().map(trip=>{const nights=tripNights(trip.startDate,trip.endDate);const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);return(<div key={trip.id} style={{display:"flex",background:T.white,borderRadius:12,overflow:"hidden",marginBottom:7,border:`1.5px solid ${T.border}`}}><div style={{width:64,flexShrink:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center",filter:"grayscale(35%)"}}/><div style={{padding:"9px 10px",flex:1}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:T.text}}>{trip.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:11,color:T.muted}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>{members.length>0&&<div style={{display:"flex",gap:3,marginTop:4}}>{members.map(m=><span key={m.id} style={{fontSize:13}}>{m.emoji}</span>)}</div>}</div></div>);})}</div>)}
-    </div>
-  );
+  return(<div style={{paddingBottom:T.navH+16,background:T.bg,minHeight:"100vh"}}>
+    <div style={{padding:"14px 12px 10px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:24,fontWeight:700,color:T.text}}>✈️ Family Trips</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted}}>{upcoming.length} upcoming · {past.length} completed</div></div>
+    {next&&(()=>{const days=tripDaysAway(next.startDate),nights=tripNights(next.startDate,next.endDate);const members=(next.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);return(<div style={{margin:"0 10px 12px",borderRadius:22,overflow:"hidden",position:"relative",height:300,boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}><div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(next)})`,backgroundSize:"cover",backgroundPosition:"center"}}/><div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.08) 0%,rgba(0,0,0,0.45) 55%,rgba(0,0,0,0.85) 100%)"}}/><div style={{position:"absolute",top:0,left:0,right:0,zIndex:2,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}><div style={{background:"rgba(255,255,255,0.22)",backdropFilter:"blur(6px)",borderRadius:99,padding:"4px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:11,fontWeight:700,color:"#fff",letterSpacing:1}}>NEXT UP</div>{days!==null&&days>=0&&<div style={{textAlign:"center",background:"rgba(0,0,0,0.35)",backdropFilter:"blur(8px)",borderRadius:14,padding:"8px 14px",border:"1px solid rgba(255,255,255,0.2)"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:44,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,fontWeight:700,color:"rgba(255,255,255,0.9)",letterSpacing:1.2,textTransform:"uppercase"}}>days away</div></div>}{days!==null&&days<0&&<div style={{background:"#2D7A56",borderRadius:14,padding:"7px 12px",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff"}}>Happening now! 🎉</div>}</div><div style={{position:"absolute",bottom:0,left:0,right:0,zIndex:2,padding:"16px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:28,fontWeight:700,color:"#fff",lineHeight:1.15,textShadow:"0 2px 12px rgba(0,0,0,0.5)"}}>{next.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:13,color:"rgba(255,255,255,0.9)",marginTop:3,marginBottom:10}}>{formatTripDates(next.startDate,next.endDate)}{nights>0?` · ${nights} night${nights!==1?"s":""}`:""}</div><div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>{next.location&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>📍 {next.location}</div>}{next.tripType&&<div style={{background:"rgba(255,255,255,0.18)",backdropFilter:"blur(4px)",borderRadius:99,padding:"3px 10px",fontFamily:"'Nunito',sans-serif",fontSize:11,fontWeight:700,color:"#fff"}}>{next.tripType}</div>}{members.length>0&&<div style={{display:"flex",gap:3,marginLeft:"auto"}}>{members.map(m=><div key={m.id} style={{width:26,height:26,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"2px solid rgba(255,255,255,0.65)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>{m.emoji}</div>)}</div>}</div></div></div>);})()}
+    {rest.length>0&&(<div style={{padding:"0 10px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.sub,marginBottom:8,letterSpacing:.6}}>COMING UP</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,marginBottom:12}}>{rest.map(trip=>{const days=tripDaysAway(trip.startDate);const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);return(<div key={trip.id} style={{borderRadius:12,overflow:"hidden",position:"relative",aspectRatio:"1/1",boxShadow:"0 2px 8px rgba(0,0,0,0.14)"}}><div style={{position:"absolute",inset:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center"}}/><div style={{position:"absolute",inset:0,background:"linear-gradient(to bottom,rgba(0,0,0,0.0) 0%,rgba(0,0,0,0.72) 100%)"}}/><div style={{position:"absolute",inset:0,zIndex:2,padding:"5px",display:"flex",flexDirection:"column",justifyContent:"space-between"}}>{days!==null&&days>=0&&<div style={{alignSelf:"flex-end",background:"rgba(0,0,0,0.45)",backdropFilter:"blur(3px)",borderRadius:7,padding:"2px 5px",textAlign:"center",border:"1px solid rgba(255,255,255,0.15)"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:"#fff",lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:7,fontWeight:700,color:"rgba(255,255,255,0.85)",letterSpacing:.6,textTransform:"uppercase"}}>days</div></div>}<div><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:"#fff",lineHeight:1.2,textShadow:"0 1px 4px rgba(0,0,0,0.7)"}}>{trip.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:9,color:"rgba(255,255,255,0.85)",marginTop:1}}>{formatTripDates(trip.startDate,trip.endDate)}</div>{members.length>0&&<div style={{display:"flex",gap:2,marginTop:3}}>{members.map(m=><div key={m.id} style={{width:14,height:14,borderRadius:"50%",background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.6)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:8}}>{m.emoji}</div>)}</div>}</div></div></div>);})}</div></div>)}
+    {past.length>0&&(<div style={{padding:"0 10px"}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:700,color:T.muted,marginBottom:8,letterSpacing:.6}}>MEMORIES</div>{[...past].reverse().map(trip=>{const nights=tripNights(trip.startDate,trip.endDate);const members=(trip.memberIds||[]).map(id=>memberMap[id]).filter(Boolean);return(<div key={trip.id} style={{display:"flex",background:T.white,borderRadius:12,overflow:"hidden",marginBottom:7,border:`1.5px solid ${T.border}`}}><div style={{width:64,flexShrink:0,backgroundImage:`url(${tripImageUrl(trip)})`,backgroundSize:"cover",backgroundPosition:"center",filter:"grayscale(35%)"}}/><div style={{padding:"9px 10px",flex:1}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:14,fontWeight:700,color:T.text}}>{trip.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:11,color:T.muted}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>{members.length>0&&<div style={{display:"flex",gap:3,marginTop:4}}>{members.map(m=><span key={m.id} style={{fontSize:13}}>{m.emoji}</span>)}</div>}</div></div>);})}</div>)}
+  </div>);
 }
 function AdminTrips({family,trips,saveTrips}){
   const ET={destination:"",startDate:"",endDate:"",location:"",tripType:"",imageKeyword:"",photoUrl:"",memberIds:[]};
@@ -608,32 +797,30 @@ function AdminTrips({family,trips,saveTrips}){
   const TYPES=["🏖️ Beach","🏔️ Mountains","🏙️ City","🎿 Ski","🌲 National Park","🚢 Cruise","🌍 International","🎡 Theme Park","🏕️ Camping","👨‍👩‍👧‍👦 Family Visit"];
   const sorted=[...(trips||[])].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
   const inp=(field,ph,type="text")=><input type={type} value={form[field]} onChange={e=>setForm(f=>({...f,[field]:e.target.value}))} placeholder={ph} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}/>;
-  return(
-    <div>
-      <h2 style={{fontSize:22,fontWeight:700,color:T.text,margin:"0 0 6px"}}>✈️ Trips</h2>
-      <p style={{fontSize:13,color:T.muted,margin:"0 0 18px",fontFamily:"'Nunito',sans-serif"}}>Add your family trips. Each shows on the Trips page with a photo, countdown, and who's going.</p>
-      {showForm&&(<div style={{background:T.white,borderRadius:16,border:`2px solid ${editingId?"#3B6FA0":T.border}`,padding:"18px 20px",marginBottom:20}}>
-        <h3 style={{fontSize:17,fontWeight:700,color:editingId?"#3B6FA0":T.text,margin:"0 0 16px"}}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
-        <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Destination *</label>{inp("destination","e.g. Outer Banks, Yellowstone")}</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-          <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Start Date *</label>{inp("startDate","","date")}</div>
-          <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>End Date</label>{inp("endDate","","date")}</div>
-          <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Location / State</label>{inp("location","e.g. North Carolina")}</div>
-          <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Trip Type</label><select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}><option value="">Select type…</option>{TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select></div>
-        </div>
-        <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Photo Keyword</label>{inp("imageKeyword","e.g. outer banks beach, yellowstone bison")}</div>
-        <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Custom Photo URL <span style={{fontWeight:400,color:T.muted}}>(optional)</span></label>{inp("photoUrl","https://your-photo.jpg")}</div>
-        <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:8}}>Who's Going?</label><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{family.map(m=>{const on=(form.memberIds||[]).includes(m.id);return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,border:`2px solid ${on?m.color:T.border}`,background:on?m.color:"transparent",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:on?"#fff":T.sub}}>{m.emoji} {m.name}</button>;})}</div></div>
-        <div style={{display:"flex",gap:10}}>
-          <button onClick={saveTripForm} disabled={saving} style={{flex:1,padding:"12px",borderRadius:12,background:editingId?"#3B6FA0":T.text,color:"#fff",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
-          <button onClick={cancelForm} style={{padding:"12px 20px",borderRadius:12,background:T.stone,color:T.sub,border:"none",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:14}}>Cancel</button>
-        </div>
-      </div>)}
-      {!showForm&&<button onClick={()=>{setEditingId(null);setForm(ET);setShowForm(true);}} style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderRadius:14,background:T.stone,border:`2px dashed ${T.border}`,cursor:"pointer",width:"100%",marginBottom:20,boxSizing:"border-box"}}><span style={{fontSize:20,color:T.muted}}>+</span><span style={{fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:600,color:T.sub}}>Add a trip</span></button>}
-      {!sorted.length&&!showForm&&<div style={{textAlign:"center",padding:"32px",color:T.muted,fontFamily:"'Nunito',sans-serif"}}>No trips yet. Tap above to plan your first adventure!</div>}
-      {sorted.map(trip=>{const days=tripDaysAway(trip.startDate),nights=tripNights(trip.startDate,trip.endDate);return(<div key={trip.id} style={{background:T.white,borderRadius:16,border:`1.5px solid ${T.border}`,marginBottom:10,overflow:"hidden"}}><div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px"}}><div style={{flex:1}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:17,fontWeight:700,color:T.text}}>{trip.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted,marginTop:2}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>{trip.location&&<div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.sub,marginTop:2}}>📍 {trip.location}</div>}<div style={{display:"flex",gap:4,marginTop:6}}>{(trip.memberIds||[]).map(id=>{const m=family.find(x=>x.id===id);return m?<span key={id} style={{fontSize:16}}>{m.emoji}</span>:null;})}</div></div><div style={{textAlign:"center",minWidth:44}}>{days===null?null:days<0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:T.muted}}>Past</div>:days===0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:"#2D7A56",fontWeight:700}}>Today!</div>:<><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:22,fontWeight:700,color:T.text,lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,color:T.muted}}>days</div></>}</div><div style={{display:"flex",flexDirection:"column",gap:6}}><button onClick={()=>startEdit(trip)} style={{padding:"6px 12px",borderRadius:8,background:"#D6E8F7",color:"#3B6FA0",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Edit</button><button onClick={()=>deleteTrip(trip.id)} style={{padding:"6px 12px",borderRadius:8,background:"#FEE2E2",color:"#DC2626",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Remove</button></div></div></div>);})}
-    </div>
-  );
+  return(<div>
+    <h2 style={{fontSize:22,fontWeight:700,color:T.text,margin:"0 0 6px"}}>✈️ Trips</h2>
+    <p style={{fontSize:13,color:T.muted,margin:"0 0 18px",fontFamily:"'Nunito',sans-serif"}}>Add your family trips. Each shows on the Trips page with a photo, countdown, and who's going.</p>
+    {showForm&&(<div style={{background:T.white,borderRadius:16,border:`2px solid ${editingId?"#3B6FA0":T.border}`,padding:"18px 20px",marginBottom:20}}>
+      <h3 style={{fontSize:17,fontWeight:700,color:editingId?"#3B6FA0":T.text,margin:"0 0 16px"}}>{editingId?"✏️ Edit Trip":"✈️ New Trip"}</h3>
+      <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Destination *</label>{inp("destination","e.g. Outer Banks, Yellowstone")}</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+        <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Start Date *</label>{inp("startDate","","date")}</div>
+        <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>End Date</label>{inp("endDate","","date")}</div>
+        <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Location / State</label>{inp("location","e.g. North Carolina")}</div>
+        <div><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Trip Type</label><select value={form.tripType} onChange={e=>setForm(f=>({...f,tripType:e.target.value}))} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`2px solid ${T.border}`,fontFamily:"'Fredoka',sans-serif",fontSize:14,boxSizing:"border-box",background:T.white}}><option value="">Select type…</option>{TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select></div>
+      </div>
+      <div style={{marginBottom:12}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Photo Keyword</label>{inp("imageKeyword","e.g. outer banks beach, yellowstone bison")}</div>
+      <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:5}}>Custom Photo URL <span style={{fontWeight:400,color:T.muted}}>(optional)</span></label>{inp("photoUrl","https://your-photo.jpg")}</div>
+      <div style={{marginBottom:16}}><label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:8}}>Who's Going?</label><div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{family.map(m=>{const on=(form.memberIds||[]).includes(m.id);return <button key={m.id} onClick={()=>setForm(f=>({...f,memberIds:on?f.memberIds.filter(id=>id!==m.id):[...(f.memberIds||[]),m.id]}))} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:99,border:`2px solid ${on?m.color:T.border}`,background:on?m.color:"transparent",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:13,fontWeight:700,color:on?"#fff":T.sub}}>{m.emoji} {m.name}</button>;})}</div></div>
+      <div style={{display:"flex",gap:10}}>
+        <button onClick={saveTripForm} disabled={saving} style={{flex:1,padding:"12px",borderRadius:12,background:editingId?"#3B6FA0":T.text,color:"#fff",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:700,cursor:"pointer"}}>{saving?"Saving…":editingId?"Save Changes":"Add Trip"}</button>
+        <button onClick={cancelForm} style={{padding:"12px 20px",borderRadius:12,background:T.stone,color:T.sub,border:"none",cursor:"pointer",fontFamily:"'Fredoka',sans-serif",fontSize:14}}>Cancel</button>
+      </div>
+    </div>)}
+    {!showForm&&<button onClick={()=>{setEditingId(null);setForm(ET);setShowForm(true);}} style={{display:"flex",alignItems:"center",gap:8,padding:"12px 20px",borderRadius:14,background:T.stone,border:`2px dashed ${T.border}`,cursor:"pointer",width:"100%",marginBottom:20,boxSizing:"border-box"}}><span style={{fontSize:20,color:T.muted}}>+</span><span style={{fontFamily:"'Fredoka',sans-serif",fontSize:15,fontWeight:600,color:T.sub}}>Add a trip</span></button>}
+    {!sorted.length&&!showForm&&<div style={{textAlign:"center",padding:"32px",color:T.muted,fontFamily:"'Nunito',sans-serif"}}>No trips yet. Tap above to plan your first adventure!</div>}
+    {sorted.map(trip=>{const days=tripDaysAway(trip.startDate),nights=tripNights(trip.startDate,trip.endDate);return(<div key={trip.id} style={{background:T.white,borderRadius:16,border:`1.5px solid ${T.border}`,marginBottom:10,overflow:"hidden"}}><div style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px"}}><div style={{flex:1}}><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:17,fontWeight:700,color:T.text}}>{trip.destination}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.muted,marginTop:2}}>{formatTripDates(trip.startDate,trip.endDate)}{nights>0?` · ${nights} nights`:""}</div>{trip.location&&<div style={{fontFamily:"'Nunito',sans-serif",fontSize:12,color:T.sub,marginTop:2}}>📍 {trip.location}</div>}<div style={{display:"flex",gap:4,marginTop:6}}>{(trip.memberIds||[]).map(id=>{const m=family.find(x=>x.id===id);return m?<span key={id} style={{fontSize:16}}>{m.emoji}</span>:null;})}</div></div><div style={{textAlign:"center",minWidth:44}}>{days===null?null:days<0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:T.muted}}>Past</div>:days===0?<div style={{fontFamily:"'Fredoka',sans-serif",fontSize:12,color:"#2D7A56",fontWeight:700}}>Today!</div>:<><div style={{fontFamily:"'Fredoka',sans-serif",fontSize:22,fontWeight:700,color:T.text,lineHeight:1}}>{days}</div><div style={{fontFamily:"'Nunito',sans-serif",fontSize:10,color:T.muted}}>days</div></>}</div><div style={{display:"flex",flexDirection:"column",gap:6}}><button onClick={()=>startEdit(trip)} style={{padding:"6px 12px",borderRadius:8,background:"#D6E8F7",color:"#3B6FA0",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Edit</button><button onClick={()=>deleteTrip(trip.id)} style={{padding:"6px 12px",borderRadius:8,background:"#FEE2E2",color:"#DC2626",border:"none",fontFamily:"'Fredoka',sans-serif",fontSize:12,fontWeight:600,cursor:"pointer"}}>Remove</button></div></div></div>);})}
+  </div>);
 }
 
 // ── Top Bar ───────────────────────────────────────────────────────────────────
@@ -679,7 +866,8 @@ function TopBar({ onAdmin }) {
 function BottomNav({ page, onPage }) {
   const tabs = [
     { id:"trips",    label:"Trips",     icon:"✈️" },
-    { id:"calendar", label:"This Week", icon:"📅" },
+    { id:"calendar", label:"Calendar",  icon:"📅" },
+    { id:"week",     label:"Week",      icon:"📋" },
     { id:"today",    label:"Today",     icon:"⚡" },
     { id:"progress", label:"Progress",  icon:"🌈" },
   ];
@@ -879,7 +1067,6 @@ function CalendarPage({ family, events }) {
 function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowDay, viewDate }) {
   // Rainbow day: earned when all sections that HAVE tasks are fully completed
   // Sections with no tasks are skipped (e.g. empty Learn still allows rainbow)
-  // CORE_SECTIONS = ["learn","exercise","contribute","goals"] — plain strings, not objects
   const sectionsWithTasks = CORE_SECTIONS.filter(sec => (tasks[sec] || []).length > 0);
   const hasAnyCoreTasks = sectionsWithTasks.length > 0;
   const allSectionsWithTasksDone = sectionsWithTasks.every(sec =>
@@ -2808,28 +2995,8 @@ function AppInner() {
 
     loadAll();
 
-    const ALERT_TIMES=[
-      {key:"130pm",h:13,m:30,daysOfWeek:null},
-      {key:"150pm",h:13,m:50,daysOfWeek:null},
-      {key:"2pm",  h:14,m:0, daysOfWeek:null},
-      {key:"payday",h:17,m:0,daysOfWeek:[0]},
-    ];
-    function checkAlertTimes(){
-      const now=new Date(new Date().toLocaleString("en-US",{timeZone:"America/Denver"}));
-      const h=now.getHours(),m=now.getMinutes(),dow=now.getDay();
-      const todayKey=`${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;
-      for(const alert of ALERT_TIMES){
-        if(h===alert.h&&m===alert.m){
-          if(alert.daysOfWeek&&!alert.daysOfWeek.includes(dow))continue;
-          const alertKey=`${alert.key}-${todayKey}`;
-          setAlertDismissedFor(prev=>{
-            if(prev[alertKey])return prev;
-            setChecklistAlert(alert.key);
-            return {...prev,[alertKey]:true};
-          });
-        }
-      }
-    }
+    const ALERT_TIMES=[{key:"130pm",h:13,m:30,daysOfWeek:null},{key:"150pm",h:13,m:50,daysOfWeek:null},{key:"2pm",h:14,m:0,daysOfWeek:null},{key:"payday",h:17,m:0,daysOfWeek:[0]}];
+    function checkAlertTimes(){const now=new Date(new Date().toLocaleString("en-US",{timeZone:"America/Denver"}));const h=now.getHours(),m=now.getMinutes(),dow=now.getDay();const todayKey=`${now.getFullYear()}-${now.getMonth()}-${now.getDate()}`;for(const alert of ALERT_TIMES){if(h===alert.h&&m===alert.m){if(alert.daysOfWeek&&!alert.daysOfWeek.includes(dow))continue;const alertKey=`${alert.key}-${todayKey}`;setAlertDismissedFor(prev=>{if(prev[alertKey])return prev;setChecklistAlert(alert.key);return {...prev,[alertKey]:true};});}}}
     const alertInterval=setInterval(checkAlertTimes,30000);
     checkAlertTimes();
 
@@ -2899,6 +3066,7 @@ function AppInner() {
       <TopBar onAdmin={goAdmin} />
       {page==="trips"    && <TripsPage    trips={trips} family={family} />}
       {page==="calendar" && <CalendarPage family={family} events={events} />}
+      {page==="week"     && <WeekPage     family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores} allCompletions={allCompletions} />}
       {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores}
         onRainbowDay={(memberId, dateStr) => {
           SB.logRainbowDay(memberId, dateStr);
