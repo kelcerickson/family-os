@@ -277,8 +277,87 @@ const ANNUAL_CHORES = [
 // Stored in state, edited in Admin
 const INIT_CHORE_ASSIGNMENTS = {};
 
+// ── Chore Zones ───────────────────────────────────────────────────────────────
+// 6 zones in 3 pairs. Each Sunday the pairs rotate between the girls (3-week cycle).
+// A zone's chores keep their usual weekday; the zone OWNER for that week gets them.
+const ZONES = [
+  { id:"bathroom", name:"Bathroom",                                    short:"Bathroom",          emoji:"🛁", floor:"Upstairs",   pair:0 },
+  { id:"kitchen",  name:"Kitchen & Pantry",                            short:"Kitchen & Pantry",  emoji:"🍳", floor:"Downstairs", pair:0 },
+  { id:"bedrooms", name:"Bedrooms & Stairs",                           short:"Bedrooms & Stairs", emoji:"🛏️", floor:"Upstairs",   pair:1 },
+  { id:"family",   name:"Family & Creative Room",                      short:"Family & Creative", emoji:"🛋️", floor:"Downstairs", pair:1 },
+  { id:"media",    name:"Media Room",                                  short:"Media Room",        emoji:"🎬", floor:"Upstairs",   pair:2 },
+  { id:"entry",    name:"Entry, Mudroom, Laundry, Porch & Guest Bath", short:"Entry & Laundry",   emoji:"🚪", floor:"Downstairs", pair:2 },
+];
+const ZONE_GIRLS_DEFAULT = ["bazel", "okrie", "saya"];
+const ZONE_EPOCH_UTC_DAYS = Date.UTC(2026, 0, 4) / 86400000; // a Sunday
+
+// Default chore → zone links (matched on the chore name as shown in the app)
+const DEFAULT_ZONE_CHORES = {
+  bathroom: ["Bath - clean mirror","Bath - clean toilet","Bath - vacuum / mop","Bath - clean counter/sink","Bath - clean tub","Bath - clean baseboards"],
+  kitchen:  ["Kitchen - wipe appliances","Kitchen - clean stove","Kitchen - clean sink","Kitchen - vacuum / mop","Kitchen - clean cupboards","Kitchen - wipe backsplash","Kitchen - clean butler countertop","Pantry - Tidy/Wipe","Pantry - tidy","Fridge - empty / wipe down"],
+  bedrooms: ["Stairs & Landing - baseboards","Stairs & Landing - vacuum","Bedrooms / Closet - vacuum","Bedrooms / Closet - tidy","Bedrooms - baseboards","Bedrooms - windows","Bedrooms - dust"],
+  family:   ["Family Room - vacuum (floor, couch)","Family Room - windows","Family Room - dust","Game Closet - Tidy","Dining Room - windows","Dining Room - baseboards","Office - Vaccum","Office - Dust","Office - baseboards"],
+  media:    ["Media room - de-clutter closet","Media room - vacuum (floor, couch)","Media room - tidy"],
+  entry:    ["Hallways & Entry - vacuum / mop","Hallways & Entry - wipe down (door, baseboards, dust)","Mud Room - vacuum / mop","Mud Room - tidy / wipe down","Back porch - tidy","Back porch - blow","Guest bath - mirror","Guest bath - toilet","Guest bath - counter / sink","Guest bath - vacuum / mop","Guest bath - baseboards","Laundry - vacuum / mop","Laundry - tidy"],
+};
+const ZONE_ALIASES = { "Office - Vacuum":"family" }; // in case the "Vaccum" typo gets fixed
+// Daily reset chores (Daily (Assign) tab) that follow a zone's owner
+const DEFAULT_ZONE_DAILY = { "ZONE - Kitchen":"kitchen", "ZONE - Family":"family", "ZONE - Dining":"family" };
+const DEFAULT_ZONE_CFG = { enabled:true, offset:0, girls:ZONE_GIRLS_DEFAULT, map:{}, daily:{} };
+
+function normChore(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+
+// Same rename/hide/custom logic the Chores tab uses, as a reusable function
+function resolveChoreList(base, key, cc) {
+  cc = cc || {};
+  const renames = cc._renames || {};
+  const hidden  = new Set(cc._hidden || []);
+  const custom  = cc[key] || [];
+  const renamedOrig = Object.keys(renames).filter(k => k.startsWith(key+"|")).map(k => k.slice((key+"|").length));
+  const resolved = base
+    .filter(c => !renamedOrig.includes(c) && !hidden.has(key+"|"+c))
+    .concat(renamedOrig.filter(c => !hidden.has(key+"|"+c)).map(c => renames[key+"|"+c]));
+  const seen = new Set(resolved);
+  return [...resolved, ...custom.filter(c => !hidden.has(key+"|"+c) && !seen.has(c))];
+}
+
+const _zoneLookupCache = new WeakMap();
+function getZoneLookup(cfg) {
+  let hit = _zoneLookupCache.get(cfg);
+  if (hit) return hit;
+  const weekly = new Map(), daily = new Map();
+  Object.entries(DEFAULT_ZONE_CHORES).forEach(([z, list]) => list.forEach(l => weekly.set(normChore(l), z)));
+  Object.entries(ZONE_ALIASES).forEach(([l, z]) => weekly.set(normChore(l), z));
+  Object.entries(DEFAULT_ZONE_DAILY).forEach(([l, z]) => daily.set(normChore(l), z));
+  Object.entries(cfg.map   || {}).forEach(([l, z]) => { const n = normChore(l); if (!z || z === "none") weekly.delete(n); else weekly.set(n, z); });
+  Object.entries(cfg.daily || {}).forEach(([l, z]) => { const n = normChore(l); if (!z || z === "none") daily.delete(n);  else daily.set(n, z);  });
+  hit = { weekly, daily };
+  _zoneLookupCache.set(cfg, hit);
+  return hit;
+}
+
+// Weeks run Sunday → Saturday. Index counts weeks since a fixed Sunday.
+function zoneWeekIndex(date) {
+  const sun = new Date(date.getFullYear(), date.getMonth(), date.getDate() - date.getDay());
+  const utcDays = Date.UTC(sun.getFullYear(), sun.getMonth(), sun.getDate()) / 86400000;
+  return Math.round((utcDays - ZONE_EPOCH_UTC_DAYS) / 7);
+}
+function zonePairForGirl(girlIdx, date, cfg) {
+  const n = zoneWeekIndex(date) + girlIdx + ((cfg && cfg.offset) || 0);
+  return ((n % 3) + 3) % 3;
+}
+function zoneOwner(zoneId, date, cfg) {
+  const zone = ZONES.find(z => z.id === zoneId);
+  if (!zone) return null;
+  const girls = (cfg && cfg.girls && cfg.girls.length === 3) ? cfg.girls : ZONE_GIRLS_DEFAULT;
+  for (let gi = 0; gi < girls.length; gi++) {
+    if (zonePairForGirl(gi, date, cfg) === zone.pair) return girls[gi];
+  }
+  return null;
+}
+
 // Helper: get chores for a specific date
-function getChoresForDate(date, choreAssignments, customChores) {
+function getChoresForDate(date, choreAssignments, customChores, zoneCfg) {
   const dow = date.getDay();
   const cc = customChores || {};
   const renames = cc._renames || {};
@@ -316,8 +395,19 @@ function getChoresForDate(date, choreAssignments, customChores) {
   // Always add daily-all chores
   DAILY_CHORES_ALL.forEach(c => allChores.push({ label:c, assignedTo:"all" }));
 
-  resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
-  resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [] }));
+  // Zone chores go to this week's zone owner; everything else uses the manual assignment
+  const zcfg = zoneCfg || DEFAULT_ZONE_CFG;
+  const zl = zcfg.enabled === false ? null : getZoneLookup(zcfg);
+  function assignedFor(c, kind) {
+    if (zl) {
+      const z = (kind === "daily" ? zl.daily : zl.weekly).get(normChore(c));
+      const owner = z ? zoneOwner(z, date, zcfg) : null;
+      if (owner) return [owner];
+    }
+    return choreAssignments[c] || [];
+  }
+  resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => allChores.push({ label:c, assignedTo: assignedFor(c, "weekly") }));
+  resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => allChores.push({ label:c, assignedTo: assignedFor(c, "daily") }));
   if (isFirstThursday(date))           resolveList(MONTHLY_CHORES,     "monthly"    ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly"     }));
   if (isFirstThursdayOfQuarter(date))  resolveList(QUARTERLY_CHORES,   "quarterly"  ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly"   }));
   if (isFirstThursdayOfSemiAnnual(date)) resolveList(SEMI_ANNUAL_CHORES,"semi_annual").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
@@ -327,8 +417,8 @@ function getChoresForDate(date, choreAssignments, customChores) {
 }
 
 // Build contribute tasks for each member on a given date
-function getContributeTasksForMember(memberId, date, choreAssignments, customChores) {
-  const allChores = getChoresForDate(date, choreAssignments, customChores);
+function getContributeTasksForMember(memberId, date, choreAssignments, customChores, zoneCfg) {
+  const allChores = getChoresForDate(date, choreAssignments, customChores, zoneCfg);
   return allChores
     .filter(c => c.assignedTo === "all" || (Array.isArray(c.assignedTo) && c.assignedTo.includes(memberId)))
     .map((c, i) => ({ id: i+1, label: c.label, done: false, freq: c.freq || "daily" }));
@@ -484,7 +574,7 @@ function Screensaver({ onDismiss, message }) {
 }
 
 
-function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allCompletions }) {
+function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allCompletions, zoneCfg }) {
   const today = getMountainToday();
   const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
   const kids = family.filter(m => m.defaultOn);
@@ -530,7 +620,7 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
   function getTasksForDate(date) {
     const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
     const dbMemberTasks = dbTasks[activeMemberId] || {};
-    const choreTasks = getContributeTasksForMember(activeMemberId, date, choreAssignments, customChores);
+    const choreTasks = getContributeTasksForMember(activeMemberId, date, choreAssignments, customChores, zoneCfg);
     function filterByDate(list) {
       return (list||[]).filter(t => {
         if (!t.recurrence || t.recurrence === "daily") return true;
@@ -629,8 +719,20 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
 }
 
 
-function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, completions, onDismiss }) {
+function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, completions, onDismiss, zoneCfg }) {
   const [pulse, setPulse] = useState(true);
+  const [liveComp, setLiveComp] = useState(null);
+  useEffect(() => {
+    if (type !== "2pm") return;
+    const t = getMountainToday();
+    const s = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;
+    SB.getCompletions(s).then(rows => {
+      const m = {};
+      (rows || []).forEach(r => { m[r.task_label + "|" + r.member_id] = true; });
+      setLiveComp(m);
+    }).catch(() => {});
+  }, [type]);
+  const comp = completions || liveComp;
   useEffect(() => { const i=setInterval(()=>setPulse(p=>!p),type==="2pm"?800:1200); return ()=>clearInterval(i); }, [type]);
   useEffect(() => {
     if (type==="130pm"){const t=setTimeout(onDismiss,300000);return ()=>clearTimeout(t);}
@@ -645,9 +747,9 @@ function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, c
   function getMemberStatus(member) {
     const today=getMountainToday();
     const memberTasks=tasks[member.id]||{};
-    const choreTasks=getContributeTasksForMember(member.id,today,choreAssignments,customChores);
+    const choreTasks=getContributeTasksForMember(member.id,today,choreAssignments,customChores,zoneCfg);
     return [{label:"School",items:memberTasks.learn||[]},{label:"Exercise",items:memberTasks.exercise||[]},{label:"Chores",items:choreTasks},{label:"Goals",items:memberTasks.goals||[]}]
-      .map(sec=>{if(!sec.items.length)return null;const allDone=sec.items.every(t=>completions&&completions[t.label+"|"+member.id]);return {...sec,allDone};}).filter(Boolean);
+      .map(sec=>{if(!sec.items.length)return null;const allDone=sec.items.every(t=>comp&&comp[t.label+"|"+member.id]);return {...sec,allDone};}).filter(Boolean);
   }
   const kids=family.filter(m=>m.defaultOn);
   return (
@@ -726,6 +828,167 @@ function AdminTrips({family,trips,saveTrips}){
   </div>);
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// ADMIN — ZONES
+// ════════════════════════════════════════════════════════════════════════════
+function AdminZones({ family, zoneCfg, saveZoneCfg, customChores }) {
+  const cfg = zoneCfg || DEFAULT_ZONE_CFG;
+  const lookup = getZoneLookup(cfg);
+  const girls = (cfg.girls && cfg.girls.length === 3) ? cfg.girls : ZONE_GIRLS_DEFAULT;
+  const [openZone, setOpenZone] = useState(null);
+  const DOWN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const memberOf = id => family.find(m => m.id === id);
+  const today = getMountainToday();
+  const sunday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - today.getDay());
+  const fmtD = d => d.toLocaleDateString("en-US", { month:"short", day:"numeric" });
+  const pairName = p => ZONES.filter(z => z.pair === p).map(z => z.short).join(" + ");
+
+  // Every weekly chore as it's currently named in the Chores tab
+  const weeklyAll = [];
+  for (let d = 0; d < 7; d++) {
+    resolveChoreList(WEEKLY_CHORES[d] || [], `weekly_${d}`, customChores).forEach(label => weeklyAll.push({ label, dow:d }));
+  }
+  weeklyAll.sort((a, b) => ((a.dow + 6) % 7) - ((b.dow + 6) % 7));
+  const dailyAll = resolveChoreList(DAILY_CHORES_INDIVIDUAL, "daily_ind", customChores);
+
+  const byZone = {};
+  ZONES.forEach(z => { byZone[z.id] = []; });
+  const noZone = [];
+  weeklyAll.forEach(item => {
+    const z = lookup.weekly.get(normChore(item.label));
+    if (z && byZone[z]) byZone[z].push(item); else noZone.push(item);
+  });
+
+  function save(patch) { saveZoneCfg({ ...cfg, ...patch }); }
+  function setWeekly(label, z) { save({ map:   { ...(cfg.map   || {}), [label]: z } }); }
+  function setDaily(label, z)  { save({ daily: { ...(cfg.daily || {}), [label]: z } }); }
+  function shift(delta) { save({ offset: ((((cfg.offset || 0) + delta) % 3) + 3) % 3 }); }
+
+  const selStyle = { padding:"6px 8px", borderRadius:8, border:`2px solid ${T.border}`, fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:700, background:T.white, color:T.text, maxWidth:150, flexShrink:0 };
+  const zoneSelect = (value, onChange, noneLabel) => (
+    <select value={value} onChange={e => onChange(e.target.value)} style={selStyle}>
+      <option value="none">{noneLabel}</option>
+      {ZONES.map(z => <option key={z.id} value={z.id}>{z.emoji} {z.short}</option>)}
+    </select>
+  );
+  const rowStyle = { display:"flex", alignItems:"center", gap:8, padding:"7px 0", borderTop:`1px solid ${T.border}` };
+  const dayTag = { fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:800, color:T.muted, background:T.stone, borderRadius:6, padding:"2px 6px", flexShrink:0 };
+  const labelStyle = { flex:1, fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600, color:T.text, lineHeight:1.3 };
+  const card = { background:T.white, border:`2px solid ${T.border}`, borderRadius:16, marginBottom:10, overflow:"hidden" };
+  const ownerChip = (m) => m && (
+    <div style={{ display:"flex", alignItems:"center", gap:5, background:m.light || T.stone, border:`2px solid ${m.color}`, borderRadius:99, padding:"3px 10px", flexShrink:0 }}>
+      <span style={{ fontSize:13 }}>{m.emoji}</span>
+      <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color:m.color }}>{m.name}</span>
+    </div>
+  );
+
+  return (
+    <div>
+      <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>🧭 Chore Zones</h2>
+      <p style={{ fontSize:13, color:T.muted, margin:"0 0 14px", fontFamily:"'Nunito',sans-serif", lineHeight:1.45 }}>
+        Each girl owns two zones per week and the pairs rotate every Sunday. A zone's chores keep their usual day — the zone owner just gets them automatically on Today and Week. Zone chores ignore the assignments in the Chores tab.
+      </p>
+
+      <button onClick={() => save({ enabled: cfg.enabled === false })}
+        style={{ width:"100%", padding:"12px", borderRadius:12, border:"none", cursor:"pointer", marginBottom:16, fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700,
+          background: cfg.enabled === false ? "#FEE2E2" : "#D1FAE5", color: cfg.enabled === false ? "#B91C1C" : "#065F46" }}>
+        {cfg.enabled === false ? "⏸ Zones are OFF — chores use the Chores tab assignments (tap to turn on)" : "✅ Zones are ON — chores rotate automatically (tap to turn off)"}
+      </button>
+
+      {/* Rotation schedule */}
+      <div style={{ ...card, padding:"14px" }}>
+        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text, marginBottom:10 }}>Rotation</div>
+        {[0, 1, 2].map(k => {
+          const d = new Date(sunday); d.setDate(sunday.getDate() + 7 * k);
+          const end = new Date(d); end.setDate(d.getDate() + 6);
+          return (
+            <div key={k} style={{ marginBottom: k < 2 ? 12 : 0, paddingTop: k > 0 ? 10 : 0, borderTop: k > 0 ? `1px solid ${T.border}` : "none" }}>
+              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:800, color: k === 0 ? "#2D7A56" : T.muted, letterSpacing:0.5, textTransform:"uppercase", marginBottom:6 }}>
+                {k === 0 ? "This week" : k === 1 ? "Next week" : "In 2 weeks"} · {fmtD(d)} – {fmtD(end)}
+              </div>
+              {girls.map((gid, gi) => {
+                const m = memberOf(gid);
+                return (
+                  <div key={gid} style={{ display:"flex", alignItems:"center", gap:8, padding:"4px 0" }}>
+                    {ownerChip(m)}
+                    <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:600, color:T.text }}>{pairName(zonePairForGirl(gi, d, cfg))}</span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+        <div style={{ display:"flex", gap:8, marginTop:14 }}>
+          <button onClick={() => shift(-1)} style={{ flex:1, padding:"10px", borderRadius:10, border:`2px solid ${T.border}`, background:T.stone, cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub }}>◀ Shift back</button>
+          <button onClick={() => shift(1)}  style={{ flex:1, padding:"10px", borderRadius:10, border:`2px solid ${T.border}`, background:T.stone, cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub }}>Shift forward ▶</button>
+        </div>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, marginTop:6 }}>Use these if the wrong girl has a zone this week. Everything after it shifts too.</div>
+      </div>
+
+      {/* Zones */}
+      {ZONES.map(z => {
+        const items = byZone[z.id];
+        const open = openZone === z.id;
+        return (
+          <div key={z.id} style={card}>
+            <div onClick={() => setOpenZone(open ? null : z.id)} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", cursor:"pointer" }}>
+              <span style={{ fontSize:24 }}>{z.emoji}</span>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontFamily:"'Fredoka',sans-serif", fontWeight:700, fontSize:15, color:T.text, lineHeight:1.2 }}>{z.name}</div>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>{z.floor} · {items.length} weekly chore{items.length === 1 ? "" : "s"}</div>
+              </div>
+              {ownerChip(memberOf(zoneOwner(z.id, today, cfg)))}
+              <span style={{ color:T.muted, fontSize:12 }}>{open ? "▲" : "▼"}</span>
+            </div>
+            {open && (
+              <div style={{ padding:"0 14px 10px" }}>
+                {items.length === 0 && <div style={{ padding:"8px 0", fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted }}>No chores in this zone yet.</div>}
+                {items.map(item => (
+                  <div key={item.label + "|" + item.dow} style={rowStyle}>
+                    <span style={dayTag}>{DOWN[item.dow]}</span>
+                    <span style={labelStyle}>{item.label}</span>
+                    {zoneSelect(z.id, v => setWeekly(item.label, v), "No zone")}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Weekly chores not in a zone */}
+      <div style={{ ...card, padding:"12px 14px" }}>
+        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, color:T.text }}>Not in a zone</div>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, marginBottom:4 }}>
+          These use the assignments in the Chores tab. If you rename a zone chore and it lands here, pick its zone to re-link it.
+        </div>
+        {noZone.length === 0 && <div style={{ padding:"8px 0", fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted }}>Every weekly chore is in a zone.</div>}
+        {noZone.map(item => (
+          <div key={item.label + "|" + item.dow} style={rowStyle}>
+            <span style={dayTag}>{DOWN[item.dow]}</span>
+            <span style={labelStyle}>{item.label}</span>
+            {zoneSelect("none", v => setWeekly(item.label, v), "No zone")}
+          </div>
+        ))}
+      </div>
+
+      {/* Daily resets */}
+      <div style={{ ...card, padding:"12px 14px" }}>
+        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, color:T.text }}>Daily resets</div>
+        <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, marginBottom:4 }}>
+          Daily (Assign) chores can follow a zone owner too, so the daily reset goes to whoever owns that zone this week.
+        </div>
+        {dailyAll.map(label => (
+          <div key={label} style={rowStyle}>
+            <span style={labelStyle}>{label}</span>
+            {zoneSelect(lookup.daily.get(normChore(label)) || "none", v => setDaily(label, v), "Manual")}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Top Bar ───────────────────────────────────────────────────────────────────
 function TopBar({ onAdmin }) {
   return (
@@ -796,6 +1059,14 @@ function BottomNav({ page, onPage }) {
 // PAGE 1 — CALENDAR
 // ════════════════════════════════════════════════════════════════════════════
 const CAL_HOURS = Array.from({ length:20 }, (_, i) => i + 5); // 5am to 12am
+// Start-time choices for the event form: every 15 minutes, 5:00 AM – 11:45 PM
+const TIME_SLOTS = Array.from({ length:76 }, (_, i) => 5 + i * 0.25);
+const DUR_OPTIONS = [0.25, 0.5, 0.75, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6];
+function fmtDur(d) {
+  if (d < 1) return `${Math.round(d * 60)} min`;
+  const h = Math.floor(d), m = Math.round((d - h) * 60);
+  return m === 0 ? `${h} hr` : `${h} hr ${m} min`;
+}
 const CELL_H = 52;
 
 const INIT_CAL_EVENTS = [];
@@ -1059,7 +1330,7 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
   );
 }
 
-function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, customChores }) {
+function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, customChores, zoneCfg }) {
   const defaultVisible = Object.fromEntries(family.map(m => [m.id, m.defaultOn]));
   const [visible, setVisible] = useState(defaultVisible);
   // Task completions loaded from Supabase per day (moved after viewDate)
@@ -1154,7 +1425,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, cus
         <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", width:"100vw", alignItems:"stretch" }}>
           {activeMembers.map(m => {
             // Merge stored tasks with auto-generated chore tasks for today
-            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments, customChores);
+            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments, customChores, zoneCfg);
             // Use tasks from Supabase, filtered by recurrence for viewDate
             const dbMemberTasks = dbTasks[m.id] || { learn:[], exercise:[], contribute:[], goals:[] };
             function filterByDate(taskList) {
@@ -1701,7 +1972,7 @@ function ProgressPage({ family, goals, setGoals, streaks, weekPts, rainbowDays, 
 // ════════════════════════════════════════════════════════════════════════════
 // ADMIN PAGE
 // ════════════════════════════════════════════════════════════════════════════
-function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, customChores, saveCustomChores, trips, saveTrips, dbTaskRows, dbGoalRows, onReload, screensaverMsg, setScreensaverMsg }) {
+function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals, choreAssignments, setChoreAssignments, customChores, saveCustomChores, trips, saveTrips, zoneCfg, saveZoneCfg, dbTaskRows, dbGoalRows, onReload, screensaverMsg, setScreensaverMsg }) {
   const [tab, setTab] = useState("calendar");
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
 
@@ -1732,7 +2003,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
           </button>
         </div>
         <div style={{ display:"flex", gap:2 }}>
-          {[{id:"calendar",label:"📅 Calendar"},{id:"chores",label:"🧹 Chores"},{id:"tasks",label:"⚡ Tasks"},{id:"goals",label:"🎯 Goals"},{id:"trips",label:"✈️ Trips"}].map(t => (
+          {[{id:"calendar",label:"📅 Calendar"},{id:"chores",label:"🧹 Chores"},{id:"zones",label:"🧭 Zones"},{id:"tasks",label:"⚡ Tasks"},{id:"goals",label:"🎯 Goals"},{id:"trips",label:"✈️ Trips"}].map(t => (
             <button key={t.id} onClick={() => setTab(t.id)} style={{ padding:"10px 18px", borderRadius:"10px 10px 0 0", border:"none", cursor:"pointer", background: tab===t.id?"#F0EEE9":"transparent", color: tab===t.id?T.text:"rgba(255,255,255,0.6)", fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:600 }}>{t.label}</button>
           ))}
         </div>
@@ -1789,6 +2060,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
 
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
         {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} customChores={customChores} saveCustomChores={saveCustomChores} />}
+        {tab==="zones"    && <AdminZones    family={family} zoneCfg={zoneCfg} saveZoneCfg={saveZoneCfg} customChores={customChores} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
         {tab==="goals"    && <AdminGoals    family={family} goals={goals}   setGoals={setGoals} dbGoalRows={dbGoalRows} />}
         {tab==="trips"    && <AdminTrips    family={family} trips={trips}   saveTrips={saveTrips} />}
@@ -1840,7 +2112,13 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
     return ev.recurrence;
   }
 
-  function formatH(h) { return h > 12 ? `${h-12}:00 PM` : h === 12 ? "12:00 PM" : `${h}:00 AM`; }
+  function formatH(h) {
+    const hr = Math.floor(h);
+    const m = Math.round((h - hr) * 60);
+    const ampm = hr >= 12 && hr < 24 ? "PM" : "AM";
+    const h12 = hr % 12 === 0 ? 12 : hr % 12;
+    return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+  }
 
   const OAUTH_STEPS = {
     google: {
@@ -2049,13 +2327,13 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Start Time</label>
               <select value={form.startH} onChange={e=>setForm(f=>({...f,startH:+e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }}>
-                {CAL_HOURS.map(h => <option key={h} value={h}>{formatH(h)}</option>)}
+                {(TIME_SLOTS.includes(form.startH) ? TIME_SLOTS : [...TIME_SLOTS, form.startH].sort((a,b)=>a-b)).map(h => <option key={h} value={h}>{formatH(h)}</option>)}
               </select>
             </div>
             <div>
               <label style={{ fontSize:12, fontWeight:700, color:T.sub, display:"block", marginBottom:5 }}>Duration</label>
               <select value={form.dur} onChange={e=>setForm(f=>({...f,dur:+e.target.value}))} style={{ width:"100%", padding:"10px 12px", borderRadius:10, border:`2px solid ${T.border}`, fontFamily:"'Fredoka',sans-serif", fontSize:14, boxSizing:"border-box" }}>
-                {[0.5,1,1.5,2,2.5,3,4].map(d => <option key={d} value={d}>{d===0.5?"30 min":`${d} hr`}</option>)}
+                {(DUR_OPTIONS.includes(form.dur) ? DUR_OPTIONS : [...DUR_OPTIONS, form.dur].sort((a,b)=>a-b)).map(d => <option key={d} value={d}>{fmtDur(d)}</option>)}
               </select>
             </div>
           </div>
@@ -2093,7 +2371,7 @@ function AdminCalendar({ family, events, setEvents, memberMap }) {
               <div style={{ flex:1 }}>
                 <div style={{ fontWeight:700, fontSize:14, color:T.text }}>{ev.title}</div>
                 <div style={{ fontSize:11, color:T.muted, marginTop:2, fontFamily:"'Nunito',sans-serif" }}>
-                  {recurrenceLabel(ev)} · {formatH(ev.startH)} · {ev.dur}hr · {ev.memberIds.map(id=>memberMap[id]?.emoji).join(" ")}
+                  {recurrenceLabel(ev)} · {formatH(ev.startH)} · {fmtDur(ev.dur)} · {ev.memberIds.map(id=>memberMap[id]?.emoji).join(" ")}
                 </div>
               </div>
               <div style={{ background: recTag==="One-time"?"#F3E5FF":recTag==="Daily"?"#D5EEE2":recTag==="Monthly"?"#FDEEDE":"#D6E8F7", color: recTag==="One-time"?"#7C5C9E":recTag==="Daily"?"#2D7A56":recTag==="Monthly"?"#D4732A":"#3B6FA0", borderRadius:99, padding:"3px 9px", fontSize:11, fontWeight:700, fontFamily:"'Fredoka',sans-serif", flexShrink:0 }}>
@@ -2710,6 +2988,7 @@ function AppInner() {
   const [choreAssignments, setChoreAssignments] = useState({});
   const [customChores,     setCustomChores]     = useState({});
   const [trips,            setTrips]            = useState([]);
+  const [zoneCfg,          setZoneCfg]          = useState(DEFAULT_ZONE_CFG);
   const [tasks,            setTasks]            = useState(INIT_TASKS);
   const [goals,            setGoals]            = useState(INIT_GOALS);
   const [streaks,          setStreaks]           = useState(INIT_STREAKS);
@@ -2780,6 +3059,10 @@ function AppInner() {
       if (tripRows && tripRows[0] && tripRows[0].value) {
         try { setTrips(JSON.parse(tripRows[0].value)); } catch {}
       }
+      const zoneRows = await SB.getSetting("chore_zones").catch(() => []);
+      if (zoneRows && zoneRows[0] && zoneRows[0].value) {
+        try { setZoneCfg({ ...DEFAULT_ZONE_CFG, ...JSON.parse(zoneRows[0].value) }); } catch {}
+      }
       const allCompRows = await sb("task_completions", "GET", null,
         `?completed_date=gte.${new Date(Date.now()-60*24*60*60*1000).toISOString().slice(0,10)}&order=completed_date.desc`
       ).catch(() => []);
@@ -2800,6 +3083,12 @@ function AppInner() {
     setTrips(next);
     try { await SB.upsertSetting("family_trips", JSON.stringify(next)); }
     catch(e) { console.error("saveTrips error:", e); }
+  }
+
+  async function saveZoneCfg(next) {
+    setZoneCfg(next);
+    try { await SB.upsertSetting("chore_zones", JSON.stringify(next)); }
+    catch(e) { console.error("saveZoneCfg error:", e); }
   }
 
   useEffect(() => {
@@ -2937,7 +3226,7 @@ function AppInner() {
 
   const goAdmin = () => { window.location.hash = "#admin"; };
 
-  const checklistAlertEl = checklistAlert ? (<ChecklistAlert type={checklistAlert} family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores} completions={null} onDismiss={()=>setChecklistAlert(null)}/>) : null;
+  const checklistAlertEl = checklistAlert ? (<ChecklistAlert type={checklistAlert} family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores} zoneCfg={zoneCfg} completions={null} onDismiss={()=>setChecklistAlert(null)}/>) : null;
   const screensaverEl = screensaver && !checklistAlert ? <Screensaver onDismiss={() => setScreensaver(false)} message={screensaverMsg} /> : null;
 
   if (loading) return (
@@ -2958,6 +3247,7 @@ function AppInner() {
     choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments}
     customChores={customChores} saveCustomChores={saveCustomChores}
     trips={trips} saveTrips={saveTrips}
+    zoneCfg={zoneCfg} saveZoneCfg={saveZoneCfg}
     dbTaskRows={dbTaskRows} dbGoalRows={dbGoalRows} onReload={loadAll}
     screensaverMsg={screensaverMsg} setScreensaverMsg={setScreensaverMsg}
   />;
@@ -2969,8 +3259,8 @@ function AppInner() {
       <TopBar onAdmin={goAdmin} />
       {page==="trips"    && <TripsPage    trips={trips} family={family} />}
       {page==="calendar" && <CalendarPage family={family} events={events} />}
-      {page==="week"     && <WeekPage     family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores} allCompletions={allCompletions} />}
-      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores}
+      {page==="week"     && <WeekPage     family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores} allCompletions={allCompletions} zoneCfg={zoneCfg} />}
+      {page==="today"    && <TodayPage    family={family} tasks={tasks} choreAssignments={choreAssignments} customChores={customChores} zoneCfg={zoneCfg}
         onRainbowDay={(memberId, dateStr) => {
           SB.logRainbowDay(memberId, dateStr);
           SB.getRainbowDays().then(r => setRainbowDays(r||[]));
