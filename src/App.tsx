@@ -63,6 +63,7 @@ const SB = {
 
   // Task completions
   getCompletions: (date) => sb("task_completions", "GET", null, `?completed_date=eq.${date}`),
+  getCompletionsRange: (from, to) => sb("task_completions", "GET", null, `?completed_date=gte.${from}&completed_date=lte.${to}`),
   addCompletion:  (label, memberId, date) => sb("task_completions", "POST",
     { task_label: label, member_id: memberId, completed_date: date },
     "?on_conflict=task_label,member_id,completed_date",
@@ -303,7 +304,16 @@ const DEFAULT_ZONE_CHORES = {
 const ZONE_ALIASES = { "Office - Vacuum":"family" }; // in case the "Vaccum" typo gets fixed
 // Daily reset chores (Daily (Assign) tab) that follow a zone's owner
 const DEFAULT_ZONE_DAILY = { "ZONE - Kitchen":"kitchen", "ZONE - Family":"family", "ZONE - Dining":"family" };
-const DEFAULT_ZONE_CFG = { enabled:true, offset:0, girls:ZONE_GIRLS_DEFAULT, map:{}, daily:{} };
+// mode "anyday": a girl's whole zone list shows in her Chores section every day until each chore is done that week.
+// mode "scheduled": each zone chore only shows on its usual weekday.
+// rainbow true: zone chores must be done to earn a Rainbow Day. false: they show up but don't block it.
+const DEFAULT_ZONE_CFG = { enabled:true, offset:0, girls:ZONE_GIRLS_DEFAULT, map:{}, daily:{}, mode:"anyday", rainbow:true };
+function buildWeekDone(rows) {
+  const m = {};
+  (rows || []).forEach(r => { const k = r.task_label + "|" + r.member_id; (m[k] = m[k] || []).push(r.completed_date); });
+  return m;
+}
+function ymd(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 
 function normChore(s) { return String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
 
@@ -357,7 +367,7 @@ function zoneOwner(zoneId, date, cfg) {
 }
 
 // Helper: get chores for a specific date
-function getChoresForDate(date, choreAssignments, customChores, zoneCfg) {
+function getChoresForDate(date, choreAssignments, customChores, zoneCfg, weekDone) {
   const dow = date.getDay();
   const cc = customChores || {};
   const renames = cc._renames || {};
@@ -406,8 +416,41 @@ function getChoresForDate(date, choreAssignments, customChores, zoneCfg) {
     }
     return choreAssignments[c] || [];
   }
-  resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => allChores.push({ label:c, assignedTo: assignedFor(c, "weekly") }));
+  const anyDay = !!zl && zcfg.mode !== "scheduled";
+  const isZoneId = z => !!z && ZONES.some(zz => zz.id === z);
+  resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => {
+    // In any-day mode zone chores are added by the zone block below instead of on their weekday
+    if (anyDay && isZoneId(zl.weekly.get(normChore(c)))) return;
+    allChores.push({ label:c, assignedTo: assignedFor(c, "weekly") });
+  });
   resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => allChores.push({ label:c, assignedTo: assignedFor(c, "daily") }));
+
+  // Any-day zone chores: every chore in the owner's zones, every day of the week, until it's done.
+  // weekDone = { "label|memberId": [dates completed this week] }
+  if (anyDay) {
+    const dStr = ymd(date);
+    const todayStr = ymd(getMountainToday());
+    const wStr = ymd(new Date(date.getFullYear(), date.getMonth(), date.getDate() - date.getDay()));
+    const seenZ = new Set();
+    const found = [];
+    for (let d = 0; d < 7; d++) {
+      resolveList(WEEKLY_CHORES[d] || [], `weekly_${d}`).forEach(c => {
+        const z = zl.weekly.get(normChore(c));
+        if (!isZoneId(z) || seenZ.has(c)) return;
+        const owner = zoneOwner(z, date, zcfg);
+        if (!owner) return;
+        seenZ.add(c);
+        found.push({ label:c, z, d, owner });
+      });
+    }
+    found.sort((a, b) => (ZONES.findIndex(x => x.id === a.z) - ZONES.findIndex(x => x.id === b.z)) || (((a.d + 6) % 7) - ((b.d + 6) % 7)));
+    found.forEach(({ label, z, owner }) => {
+      const dates = ((weekDone || {})[label + "|" + owner] || []).filter(x => x >= wStr);
+      // Past days: only what was actually done that day. Today/future: hide once done on an earlier day.
+      const visible = dStr < todayStr ? dates.includes(dStr) : !dates.some(x => x < dStr);
+      if (visible) allChores.push({ label, assignedTo:[owner], zone:z, rainbowExempt: zcfg.rainbow === false });
+    });
+  }
   if (isFirstThursday(date))           resolveList(MONTHLY_CHORES,     "monthly"    ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly"     }));
   if (isFirstThursdayOfQuarter(date))  resolveList(QUARTERLY_CHORES,   "quarterly"  ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly"   }));
   if (isFirstThursdayOfSemiAnnual(date)) resolveList(SEMI_ANNUAL_CHORES,"semi_annual").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
@@ -417,11 +460,11 @@ function getChoresForDate(date, choreAssignments, customChores, zoneCfg) {
 }
 
 // Build contribute tasks for each member on a given date
-function getContributeTasksForMember(memberId, date, choreAssignments, customChores, zoneCfg) {
-  const allChores = getChoresForDate(date, choreAssignments, customChores, zoneCfg);
+function getContributeTasksForMember(memberId, date, choreAssignments, customChores, zoneCfg, weekDone) {
+  const allChores = getChoresForDate(date, choreAssignments, customChores, zoneCfg, weekDone);
   return allChores
     .filter(c => c.assignedTo === "all" || (Array.isArray(c.assignedTo) && c.assignedTo.includes(memberId)))
-    .map((c, i) => ({ id: i+1, label: c.label, done: false, freq: c.freq || "daily" }));
+    .map((c, i) => ({ id: i+1, label: c.label, done: false, freq: c.freq || "daily", zone: c.zone, rainbowExempt: c.rainbowExempt }));
 }
 
 
@@ -590,6 +633,8 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
   })();
 
   const [completionsByDate, setCompletionsByDate] = useState({});
+  const weekDone = {};
+  Object.entries(completionsByDate).forEach(([dStr, m]) => Object.keys(m).forEach(k => { (weekDone[k] = weekDone[k] || []).push(dStr); }));
 
   useEffect(() => {
     async function loadWeek() {
@@ -620,7 +665,9 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
   function getTasksForDate(date) {
     const dateStr = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
     const dbMemberTasks = dbTasks[activeMemberId] || {};
-    const choreTasks = getContributeTasksForMember(activeMemberId, date, choreAssignments, customChores, zoneCfg);
+    // Zone chores live in "today" until they're done; keep the other days' columns uncluttered
+    const choreTasks = getContributeTasksForMember(activeMemberId, date, choreAssignments, customChores, zoneCfg, weekDone)
+      .filter(t => !t.zone || dateStr === todayStr);
     function filterByDate(list) {
       return (list||[]).filter(t => {
         if (!t.recurrence || t.recurrence === "daily") return true;
@@ -722,6 +769,7 @@ function WeekPage({ family, tasks: dbTasks, choreAssignments, customChores, allC
 function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, completions, onDismiss, zoneCfg }) {
   const [pulse, setPulse] = useState(true);
   const [liveComp, setLiveComp] = useState(null);
+  const [liveWeek, setLiveWeek] = useState({});
   useEffect(() => {
     if (type !== "2pm") return;
     const t = getMountainToday();
@@ -731,6 +779,8 @@ function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, c
       (rows || []).forEach(r => { m[r.task_label + "|" + r.member_id] = true; });
       setLiveComp(m);
     }).catch(() => {});
+    const sun = new Date(t.getFullYear(), t.getMonth(), t.getDate() - t.getDay());
+    SB.getCompletionsRange(ymd(sun), s).then(rows => setLiveWeek(buildWeekDone(rows))).catch(() => {});
   }, [type]);
   const comp = completions || liveComp;
   useEffect(() => { const i=setInterval(()=>setPulse(p=>!p),type==="2pm"?800:1200); return ()=>clearInterval(i); }, [type]);
@@ -747,9 +797,9 @@ function ChecklistAlert({ type, family, tasks, choreAssignments, customChores, c
   function getMemberStatus(member) {
     const today=getMountainToday();
     const memberTasks=tasks[member.id]||{};
-    const choreTasks=getContributeTasksForMember(member.id,today,choreAssignments,customChores,zoneCfg);
+    const choreTasks=getContributeTasksForMember(member.id,today,choreAssignments,customChores,zoneCfg,liveWeek);
     return [{label:"School",items:memberTasks.learn||[]},{label:"Exercise",items:memberTasks.exercise||[]},{label:"Chores",items:choreTasks},{label:"Goals",items:memberTasks.goals||[]}]
-      .map(sec=>{if(!sec.items.length)return null;const allDone=sec.items.every(t=>comp&&comp[t.label+"|"+member.id]);return {...sec,allDone};}).filter(Boolean);
+      .map(sec=>{if(!sec.items.length)return null;const allDone=sec.items.filter(t=>!t.rainbowExempt).every(t=>comp&&comp[t.label+"|"+member.id]);return {...sec,allDone};}).filter(Boolean);
   }
   const kids=family.filter(m=>m.defaultOn);
   return (
@@ -886,7 +936,7 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores }) {
     <div>
       <h2 style={{ fontSize:22, fontWeight:700, color:T.text, margin:"0 0 6px" }}>🧭 Chore Zones</h2>
       <p style={{ fontSize:13, color:T.muted, margin:"0 0 14px", fontFamily:"'Nunito',sans-serif", lineHeight:1.45 }}>
-        Each girl owns two zones per week and the pairs rotate every Sunday. A zone's chores keep their usual day — the zone owner just gets them automatically on Today and Week. Zone chores ignore the assignments in the Chores tab.
+        Each girl owns two zones per week and the pairs rotate every Sunday. The zone owner gets those chores automatically on Today. Zone chores ignore the assignments in the Chores tab, which still manages the chore list itself and everything outside the zones.
       </p>
 
       <button onClick={() => save({ enabled: cfg.enabled === false })}
@@ -894,6 +944,41 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores }) {
           background: cfg.enabled === false ? "#FEE2E2" : "#D1FAE5", color: cfg.enabled === false ? "#B91C1C" : "#065F46" }}>
         {cfg.enabled === false ? "⏸ Zones are OFF — chores use the Chores tab assignments (tap to turn on)" : "✅ Zones are ON — chores rotate automatically (tap to turn off)"}
       </button>
+
+      {/* How zone chores show up */}
+      <div style={{ ...card, padding:"14px" }}>
+        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text, marginBottom:8 }}>When zone chores show up</div>
+        {(() => {
+          const seg = (active, label, onClick) => (
+            <button onClick={onClick} style={{ flex:1, padding:"10px 8px", borderRadius:10, cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
+              border:`2px solid ${active ? "#7C5C9E" : T.border}`, background: active ? "#7C5C9E" : T.stone, color: active ? "#fff" : T.sub }}>{label}</button>
+          );
+          const anyDay = cfg.mode !== "scheduled";
+          return (
+            <>
+              <div style={{ display:"flex", gap:8 }}>
+                {seg(anyDay, "Any day this week", () => save({ mode:"anyday" }))}
+                {seg(!anyDay, "On their usual day", () => save({ mode:"scheduled" }))}
+              </div>
+              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, margin:"6px 0 12px", lineHeight:1.4 }}>
+                {anyDay
+                  ? "Her whole zone list shows in the Chores section every day. Each chore disappears the day after it's checked off, so she can knock it all out in one day or spread it out."
+                  : "Each zone chore only shows on its usual weekday (Bath on Monday, Kitchen on Tuesday, and so on)."}
+              </div>
+              <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:T.text, marginBottom:6 }}>Rainbow Day</div>
+              <div style={{ display:"flex", gap:8 }}>
+                {seg(cfg.rainbow !== false, "Zone chores required", () => save({ rainbow:true }))}
+                {seg(cfg.rainbow === false, "Don't block it", () => save({ rainbow:false }))}
+              </div>
+              <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, marginTop:6, lineHeight:1.4 }}>
+                {cfg.rainbow !== false
+                  ? "A Rainbow Day needs every chore done, including her zone chores. In 'Any day' mode that means no Rainbow Day until her zone list is finished for the week."
+                  : "Zone chores still show up and can be checked off, but a Rainbow Day only needs the daily chores plus School, Exercise and Goals."}
+              </div>
+            </>
+          );
+        })()}
+      </div>
 
       {/* Rotation schedule */}
       <div style={{ ...card, padding:"14px" }}>
@@ -1241,10 +1326,12 @@ function CalendarPage({ family, events }) {
 function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowDay, viewDate }) {
   // Rainbow day: earned when all sections that HAVE tasks are fully completed
   // Sections with no tasks are skipped (e.g. empty Learn still allows rainbow)
-  const sectionsWithTasks = CORE_SECTIONS.filter(sec => (tasks[sec] || []).length > 0);
+  // Zone chores can be set to "show but don't block Rainbow Day" (rainbowExempt) in Admin → Zones
+  const reqTasks = sec => (tasks[sec] || []).filter(t => !t.rainbowExempt);
+  const sectionsWithTasks = CORE_SECTIONS.filter(sec => reqTasks(sec).length > 0);
   const hasAnyCoreTasks = sectionsWithTasks.length > 0;
   const allSectionsWithTasksDone = sectionsWithTasks.every(sec =>
-    (tasks[sec] || []).every(t => !!(completions && completions[t.label + "|" + member.id]))
+    reqTasks(sec).every(t => !!(completions && completions[t.label + "|" + member.id]))
   );
   const isRainbow = hasAnyCoreTasks && allSectionsWithTasksDone;
 
@@ -1293,7 +1380,8 @@ function PersonColumn({ member, tasks, onToggle, points, completions, onRainbowD
             done: !!(completions && completions[t.label + "|" + member.id])
           }));
           const doneCnt = secTasksWithDone.filter(t => t.done).length;
-          const done = !isBonus && !isOpen && secTasksWithDone.length > 0 && secTasksWithDone.every(t => t.done);
+          const reqT = secTasksWithDone.filter(t => !t.rainbowExempt);
+          const done = !isBonus && !isOpen && reqT.length > 0 && reqT.every(t => t.done);
           return (
             <div key={sec.id} style={{ marginBottom:10 }}>
               <div style={{ borderRadius:"12px 12px 0 0", padding:"8px 10px 6px", background: done?sec.grad:T.white, border:`2px solid ${done?"transparent":T.border}`, borderBottom:"none", display:"flex", alignItems:"center", gap:7 }}>
@@ -1336,6 +1424,13 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, cus
   // Task completions loaded from Supabase per day (moved after viewDate)
   const [taskState, setTaskStateRaw] = useState({});
   const [completions, setCompletions] = useState({});
+  // Completions for the zone-rotation week (Sun–Sat) of the day being viewed
+  const [weekDone, setWeekDone] = useState({});
+  function loadWeekDone() {
+    const sun = new Date(viewDate.getFullYear(), viewDate.getMonth(), viewDate.getDate() - viewDate.getDay());
+    const sat = new Date(sun.getFullYear(), sun.getMonth(), sun.getDate() + 6);
+    SB.getCompletionsRange(ymd(sun), ymd(sat)).then(rows => setWeekDone(buildWeekDone(rows))).catch(() => {});
+  }
 
   function setTaskState(next) {
     const resolved = typeof next === "function" ? next(taskState) : next;
@@ -1352,12 +1447,16 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, cus
       await SB.addCompletion(label, memberId, dateStr);
       setCompletions(prev => ({ ...prev, [key]: true }));
     }
+    loadWeekDone();
   }
   const [viewDate, setViewDate] = useState(getMountainToday());
 
   function prevDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()-1); return n; }); }
   function nextDay() { setViewDate(d => { const n=new Date(d); n.setDate(n.getDate()+1); return n; }); }
   const isToday = viewDate.toDateString() === getMountainToday().toDateString();
+
+  // Reload the week's completions when the viewed day moves into a different Sun–Sat week
+  useEffect(() => { loadWeekDone(); }, [ymd(new Date(viewDate.getFullYear(), viewDate.getMonth(), viewDate.getDate() - viewDate.getDay()))]);
 
   // Load completions from Supabase when date changes
   useEffect(() => {
@@ -1425,7 +1524,7 @@ function TodayPage({ family, tasks: dbTasks, choreAssignments, onRainbowDay, cus
         <div style={{ flex:1, display:"flex", overflowX:"auto", overflowY:"hidden", WebkitOverflowScrolling:"touch", touchAction:"pan-x", width:"100vw", alignItems:"stretch" }}>
           {activeMembers.map(m => {
             // Merge stored tasks with auto-generated chore tasks for today
-            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments, customChores, zoneCfg);
+            const choreTasks = getContributeTasksForMember(m.id, viewDate, choreAssignments, customChores, zoneCfg, weekDone);
             // Use tasks from Supabase, filtered by recurrence for viewDate
             const dbMemberTasks = dbTasks[m.id] || { learn:[], exercise:[], contribute:[], goals:[] };
             function filterByDate(taskList) {
@@ -2059,7 +2158,7 @@ function AdminPage({ family, events, setEvents, tasks, setTasks, goals, setGoals
         </div>
 
         {tab==="calendar" && <AdminCalendar family={family} events={events} setEvents={setEvents} memberMap={memberMap} />}
-        {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} customChores={customChores} saveCustomChores={saveCustomChores} />}
+        {tab==="chores"    && <AdminChores   family={family} choreAssignments={choreAssignments} setChoreAssignments={setChoreAssignments} customChores={customChores} saveCustomChores={saveCustomChores} zoneCfg={zoneCfg} />}
         {tab==="zones"    && <AdminZones    family={family} zoneCfg={zoneCfg} saveZoneCfg={saveZoneCfg} customChores={customChores} />}
         {tab==="tasks"    && <AdminTasks    family={family} tasks={tasks}   setTasks={setTasks} />}
         {tab==="goals"    && <AdminGoals    family={family} goals={goals}   setGoals={setGoals} dbGoalRows={dbGoalRows} />}
@@ -2398,7 +2497,7 @@ const FREQ_GROUPS = [
   { id:"annual",      label:"Annual",              color:"#2D7A56", chores: ANNUAL_CHORES,          desc:"Appears on the 1st Thursday of January" },
 ];
 
-function AdminChores({ family, choreAssignments, setChoreAssignments, customChores, saveCustomChores }) {
+function AdminChores({ family, choreAssignments, setChoreAssignments, customChores, saveCustomChores, zoneCfg }) {
   const choreAssignmentsRef = { current: choreAssignments };
   choreAssignmentsRef.current = choreAssignments;
   const [activeFreq, setActiveFreq] = useState("daily_ind");
@@ -2566,6 +2665,9 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
             const assigned = choreAssignments[chore] || [];
             const isEditing = editingChore?.oldLabel === chore;
             const isCustom = (customChores[activeFreq === "weekly" ? `weekly_${activeDow}` : activeFreq] || []).includes(chore);
+            const zl = (zoneCfg && zoneCfg.enabled === false) ? null : getZoneLookup(zoneCfg || DEFAULT_ZONE_CFG);
+            const zId = zl ? (activeFreq === "weekly" ? zl.weekly.get(normChore(chore)) : activeFreq === "daily_ind" ? zl.daily.get(normChore(chore)) : null) : null;
+            const zObj = zId ? ZONES.find(z => z.id === zId) : null;
             return (
               <div key={chore} style={{
                 display:"grid", gridTemplateColumns:`1fr ${family.map(()=>"56px").join(" ")} 72px`,
@@ -2598,8 +2700,13 @@ function AdminChores({ family, choreAssignments, setChoreAssignments, customChor
                   )}
                 </div>
 
-                {/* Assignment toggles */}
-                {family.map(m => {
+                {/* Assignment toggles (zone chores are assigned automatically by the zone rotation) */}
+                {zObj ? (
+                  <div style={{ gridColumn:`2 / span ${family.length}`, display:"flex", alignItems:"center", gap:6, background:"#F1EEFA", border:"1.5px solid #D9D0F2", borderRadius:10, padding:"6px 10px" }}>
+                    <span style={{ fontSize:16 }}>{zObj.emoji}</span>
+                    <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:700, color:"#5B4A8A", lineHeight:1.25 }}>{zObj.short} zone — assigned automatically (see Zones tab)</span>
+                  </div>
+                ) : family.map(m => {
                   const isOn = assigned.includes(m.id);
                   return (
                     <div key={m.id} style={{ display:"flex", justifyContent:"center" }}>
