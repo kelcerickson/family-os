@@ -307,11 +307,20 @@ const DEFAULT_ZONE_DAILY = { "ZONE - Kitchen":"kitchen", "ZONE - Family":"family
 // mode "anyday": a girl's whole zone list shows in her Chores section every day until each chore is done that week.
 // mode "scheduled": each zone chore only shows on its usual weekday.
 // rainbow true: zone chores must be done to earn a Rainbow Day. false: they show up but don't block it.
-const DEFAULT_ZONE_CFG = { enabled:true, offset:0, girls:ZONE_GIRLS_DEFAULT, map:{}, daily:{}, mode:"anyday", rainbow:true };
+// freq: { "chore name": "daily" | "weekly" } — how often each zone chore is done. Weekly chores come from the weekly lists
+// and daily ones from the Daily (Assign) list unless overridden here.
+const DEFAULT_ZONE_CFG = { enabled:true, offset:0, girls:ZONE_GIRLS_DEFAULT, map:{}, daily:{}, freq:{}, mode:"anyday", rainbow:true };
 function buildWeekDone(rows) {
   const m = {};
   (rows || []).forEach(r => { const k = r.task_label + "|" + r.member_id; (m[k] = m[k] || []).push(r.completed_date); });
   return m;
+}
+// Zone settings to save after a zone chore is renamed (keeps its zone link and its daily/weekly choice)
+function zoneCfgAfterRename(cfg, kind, newLabel, zoneId, freq) {
+  const f = { ...(cfg.freq || {}), [newLabel]: freq };
+  return kind === "daily"
+    ? { daily: { ...(cfg.daily || {}), [newLabel]: zoneId }, freq: f }
+    : { map:   { ...(cfg.map   || {}), [newLabel]: zoneId }, freq: f };
 }
 // Valid zone id for a chore name, or null
 function zoneIdFor(zl, kind, label) {
@@ -376,13 +385,14 @@ const _zoneLookupCache = new WeakMap();
 function getZoneLookup(cfg) {
   let hit = _zoneLookupCache.get(cfg);
   if (hit) return hit;
-  const weekly = new Map(), daily = new Map();
+  const weekly = new Map(), daily = new Map(), freq = new Map();
   Object.entries(DEFAULT_ZONE_CHORES).forEach(([z, list]) => list.forEach(l => weekly.set(normChore(l), z)));
   Object.entries(ZONE_ALIASES).forEach(([l, z]) => weekly.set(normChore(l), z));
   Object.entries(DEFAULT_ZONE_DAILY).forEach(([l, z]) => daily.set(normChore(l), z));
   Object.entries(cfg.map   || {}).forEach(([l, z]) => { const n = normChore(l); if (!z || z === "none") weekly.delete(n); else weekly.set(n, z); });
   Object.entries(cfg.daily || {}).forEach(([l, z]) => { const n = normChore(l); if (!z || z === "none") daily.delete(n);  else daily.set(n, z);  });
-  hit = { weekly, daily };
+  Object.entries(cfg.freq || {}).forEach(([l, f]) => { if (f === "daily" || f === "weekly") freq.set(normChore(l), f); });
+  hit = { weekly, daily, freq };
   _zoneLookupCache.set(cfg, hit);
   return hit;
 }
@@ -449,50 +459,65 @@ function getChoresForDate(date, choreAssignments, customChores, zoneCfg, weekDon
   // Zone chores go to this week's zone owner; everything else uses the manual assignment
   const zcfg = zoneCfg || DEFAULT_ZONE_CFG;
   const zl = zcfg.enabled === false ? null : getZoneLookup(zcfg);
-  function assignedFor(c, kind) {
-    if (zl) {
-      const z = (kind === "daily" ? zl.daily : zl.weekly).get(normChore(c));
-      const owner = z ? zoneOwner(z, date, zcfg) : null;
-      if (owner) return [owner];
-    }
-    return choreAssignments[c] || [];
-  }
   const anyDay = !!zl && zcfg.mode !== "scheduled";
-  const isZoneId = z => !!z && ZONES.some(zz => zz.id === z);
-  const tagFor = (c, kind) => zoneIdFor(zl, kind, c) || undefined;
-  resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => {
-    // In any-day mode zone chores are added by the zone block below instead of on their weekday
-    if (anyDay && isZoneId(zl.weekly.get(normChore(c)))) return;
-    allChores.push({ label:c, assignedTo: assignedFor(c, "weekly"), freq:"weekly", zoneTag: tagFor(c, "weekly") });
-  });
-  resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => allChores.push({ label:c, assignedTo: assignedFor(c, "daily"), freq:"daily", zoneTag: tagFor(c, "daily") }));
 
-  // Any-day zone chores: every chore in the owner's zones, every day of the week, until it's done.
-  // weekDone = { "label|memberId": [dates completed this week] }
-  if (anyDay) {
+  // Every chore that belongs to a zone (from both stored lists). Each one is either "daily" or "weekly".
+  const zoneList = [];
+  if (zl) {
+    const seenZ = new Set();
+    for (let d = 0; d < 7; d++) {
+      resolveList(WEEKLY_CHORES[d] || [], `weekly_${d}`).forEach(c => {
+        const z = zoneIdFor(zl, "weekly", c);
+        if (!z || seenZ.has(c)) return;
+        seenZ.add(c);
+        zoneList.push({ label:c, z, d, f: zl.freq.get(normChore(c)) || "weekly" });
+      });
+    }
+    resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => {
+      const z = zoneIdFor(zl, "daily", c);
+      if (!z || seenZ.has(c)) return;
+      seenZ.add(c);
+      zoneList.push({ label:c, z, d:null, f: zl.freq.get(normChore(c)) || "daily" });
+    });
+  }
+  const inZone = new Set(zoneList.map(x => x.label));
+
+  // Chores outside the zones: manual assignment, exactly as before
+  resolveList(WEEKLY_CHORES[dow] || [], `weekly_${dow}`).forEach(c => {
+    if (inZone.has(c)) return;
+    allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"weekly" });
+  });
+  resolveList(DAILY_CHORES_INDIVIDUAL, "daily_ind").forEach(c => {
+    if (inZone.has(c)) return;
+    allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"daily" });
+  });
+
+  // Zone chores go to the zone owner:
+  //   daily  → every day, resets each day
+  //   weekly → "usual day" mode: only on its usual weekday
+  //            "any day" mode:   every day until it's been done that week (weekDone = { "label|memberId": [dates done this week] })
+  //            (a weekly chore with no usual day, e.g. one moved over from the Daily list, always works any-day)
+  if (zoneList.length) {
     const dStr = ymd(date);
     const todayStr = ymd(getMountainToday());
     const wStr = ymd(new Date(date.getFullYear(), date.getMonth(), date.getDate() - date.getDay()));
-    const seenZ = new Set();
-    const found = [];
-    for (let d = 0; d < 7; d++) {
-      resolveList(WEEKLY_CHORES[d] || [], `weekly_${d}`).forEach(c => {
-        const z = zl.weekly.get(normChore(c));
-        if (!isZoneId(z) || seenZ.has(c)) return;
-        const owner = zoneOwner(z, date, zcfg);
-        if (!owner) return;
-        seenZ.add(c);
-        found.push({ label:c, z, d, owner });
-      });
-    }
-    found.sort((a, b) => (ZONES.findIndex(x => x.id === a.z) - ZONES.findIndex(x => x.id === b.z)) || (((a.d + 6) % 7) - ((b.d + 6) % 7)));
-    found.forEach(({ label, z, owner }) => {
+    const dayRank = x => x.d == null ? 7 : (x.d + 6) % 7;
+    const zoneRank = x => ZONES.findIndex(zz => zz.id === x.z);
+    zoneList.slice().sort((p, q) => (zoneRank(p) - zoneRank(q)) || (dayRank(p) - dayRank(q))).forEach(({ label, z, d, f }) => {
+      const owner = zoneOwner(z, date, zcfg);
+      if (!owner) return;
+      if (f === "daily") { allChores.push({ label, assignedTo:[owner], freq:"daily", zoneTag:z }); return; }
+      if (!anyDay && d != null) {
+        if (d === dow) allChores.push({ label, assignedTo:[owner], freq:"weekly", zoneTag:z });
+        return;
+      }
       const dates = ((weekDone || {})[label + "|" + owner] || []).filter(x => x >= wStr);
       // Past days: only what was actually done that day. Today/future: hide once done on an earlier day.
       const visible = dStr < todayStr ? dates.includes(dStr) : !dates.some(x => x < dStr);
       if (visible) allChores.push({ label, assignedTo:[owner], zone:z, zoneTag:z, freq:"weekly", rainbowExempt: zcfg.rainbow === false });
     });
   }
+
   if (isFirstThursday(date))           resolveList(MONTHLY_CHORES,     "monthly"    ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"monthly"     }));
   if (isFirstThursdayOfQuarter(date))  resolveList(QUARTERLY_CHORES,   "quarterly"  ).forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"quarterly"   }));
   if (isFirstThursdayOfSemiAnnual(date)) resolveList(SEMI_ANNUAL_CHORES,"semi_annual").forEach(c => allChores.push({ label:c, assignedTo: choreAssignments[c] || [], freq:"semi-annual" }));
@@ -927,9 +952,9 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores, saveCustomChor
   const cfg = zoneCfg || DEFAULT_ZONE_CFG;
   const lookup = getZoneLookup(cfg);
   const girls = (cfg.girls && cfg.girls.length === 3) ? cfg.girls : ZONE_GIRLS_DEFAULT;
-  const [openZone, setOpenZone] = useState(null);
+  const [openZones, setOpenZones] = useState({});               // which zone cards are expanded
   const [editing, setEditing] = useState(null);                  // which chore name is being renamed
-  const [newChore, setNewChore] = useState({ zone:null, name:"", dow:1 });
+  const [newChore, setNewChore] = useState({ zone:null, name:"", dow:1, freq:"weekly" });
   const DOWN = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
   const memberOf = id => family.find(m => m.id === id);
   const today = getMountainToday();
@@ -940,7 +965,7 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores, saveCustomChor
   // Every weekly chore as it's currently named in the Chores tab
   const weeklyAll = [];
   for (let d = 0; d < 7; d++) {
-    resolveChoreList(WEEKLY_CHORES[d] || [], `weekly_${d}`, customChores).forEach(label => weeklyAll.push({ label, dow:d }));
+    resolveChoreList(WEEKLY_CHORES[d] || [], `weekly_${d}`, customChores).forEach(label => weeklyAll.push({ label, dow:d, kind:"weekly" }));
   }
   weeklyAll.sort((a, b) => ((a.dow + 6) % 7) - ((b.dow + 6) % 7));
   const dailyAll = resolveChoreList(DAILY_CHORES_INDIVIDUAL, "daily_ind", customChores);
@@ -952,6 +977,8 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores, saveCustomChor
     const z = lookup.weekly.get(normChore(item.label));
     if (z && byZone[z]) byZone[z].push(item); else noZone.push(item);
   });
+  // Daily (Assign) chores that belong to a zone are listed inside that zone too
+  dailyAll.forEach(label => { const z = zoneIdFor(lookup, "daily", label); if (z) byZone[z].push({ label, dow:null, kind:"daily" }); });
 
   function save(patch) { saveZoneCfg({ ...cfg, ...patch }); }
   function setWeekly(label, z) { save({ map:   { ...(cfg.map   || {}), [label]: z } }); }
@@ -966,9 +993,8 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores, saveCustomChor
     setEditing(null);
     if (!trimmed || trimmed === oldLabel) return;
     saveCustomChores(ccRename(customChores || {}, keyOf(kind, dow), baseOf(kind, dow), oldLabel, trimmed));
-    // keep the zone link on the new name
-    if (kind === "daily") save({ daily: { ...(cfg.daily || {}), [trimmed]: zoneId } });
-    else save({ map: { ...(cfg.map || {}), [trimmed]: zoneId } });
+    // keep the zone link and the daily/weekly choice on the new name
+    save(zoneCfgAfterRename(cfg, kind, trimmed, zoneId, lookup.freq.get(normChore(oldLabel)) || (kind === "daily" ? "daily" : "weekly")));
   }
   function deleteZoneChore(kind, dow, label) {
     if (!window.confirm(`Delete "${label}"?`)) return;
@@ -978,9 +1004,25 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores, saveCustomChor
     const name = (newChore.name || "").trim();
     if (!name) return;
     saveCustomChores(ccAdd(customChores || {}, `weekly_${newChore.dow}`, name));
-    save({ map: { ...(cfg.map || {}), [name]: zoneId } });
-    setNewChore({ zone: zoneId, name:"", dow:newChore.dow });
+    save({ map: { ...(cfg.map || {}), [name]: zoneId }, freq: { ...(cfg.freq || {}), [name]: newChore.freq || "weekly" } });
+    setNewChore({ zone: zoneId, name:"", dow:newChore.dow, freq:newChore.freq || "weekly" });
   }
+  // Daily vs weekly for each zone chore
+  const freqOf = item => lookup.freq.get(normChore(item.label)) || (item.kind === "daily" ? "daily" : "weekly");
+  const setFreq = (label, f) => save({ freq: { ...(cfg.freq || {}), [label]: f } });
+  const setAllFreq = (items, f) => { const nf = { ...(cfg.freq || {}) }; items.forEach(it => { nf[it.label] = f; }); save({ freq: nf }); };
+  const freqToggle = (label, f) => (
+    <div style={{ display:"inline-flex", borderRadius:8, overflow:"hidden", border:"2px solid #7C5C9E", flexShrink:0 }}>
+      {["daily", "weekly"].map(opt => (
+        <button key={opt} onClick={() => setFreq(label, opt)}
+          style={{ padding:"5px 12px", border:"none", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700,
+            background: f === opt ? (opt === "daily" ? "#2D6A4F" : "#5B4A8A") : "#fff", color: f === opt ? "#fff" : "#7C5C9E" }}>
+          {opt === "daily" ? "Daily" : "Weekly"}
+        </button>
+      ))}
+    </div>
+  );
+  const smallBtn = { padding:"6px 12px", borderRadius:8, border:`2px solid ${T.border}`, background:T.stone, cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:12, fontWeight:700, color:T.sub };
   const pill = kind => ({ fontFamily:"'Nunito',sans-serif", fontSize:9, fontWeight:800, letterSpacing:0.3, textTransform:"uppercase", borderRadius:99, padding:"2px 7px", flexShrink:0,
     background: kind === "daily" ? "#E6F0EA" : "#EDE7F8", color: kind === "daily" ? "#2D6A4F" : "#5B4A8A" });
   const delBtn = { width:24, height:24, borderRadius:8, background:"#FEE2E2", color:"#DC2626", border:"none", fontSize:14, cursor:"pointer", flexShrink:0, lineHeight:1 };
@@ -1028,7 +1070,7 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores, saveCustomChor
 
       {/* How zone chores show up */}
       <div style={{ ...card, padding:"14px" }}>
-        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text, marginBottom:8 }}>When zone chores show up</div>
+        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:16, fontWeight:700, color:T.text, marginBottom:8 }}>When weekly zone chores show up</div>
         {(() => {
           const seg = (active, label, onClick) => (
             <button onClick={onClick} style={{ flex:1, padding:"10px 8px", borderRadius:10, cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700,
@@ -1043,18 +1085,18 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores, saveCustomChor
               </div>
               <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, margin:"6px 0 12px", lineHeight:1.4 }}>
                 {anyDay
-                  ? "Her whole zone list shows in the Chores section every day. Each chore disappears the day after it's checked off, so she can knock it all out in one day or spread it out."
-                  : "Each zone chore only shows on its usual weekday (Bath on Monday, Kitchen on Tuesday, and so on)."}
+                  ? "Her weekly zone chores show in the Chores section every day. Each one disappears the day after it's checked off, so she can knock them all out in one day or spread them out. Daily zone chores show every day."
+                  : "Each weekly zone chore only shows on its usual weekday (Bath on Monday, Kitchen on Tuesday, and so on). Daily zone chores show every day."}
               </div>
               <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:14, fontWeight:700, color:T.text, marginBottom:6 }}>Rainbow Day</div>
               <div style={{ display:"flex", gap:8 }}>
-                {seg(cfg.rainbow !== false, "Zone chores required", () => save({ rainbow:true }))}
+                {seg(cfg.rainbow !== false, "Weekly zone chores required", () => save({ rainbow:true }))}
                 {seg(cfg.rainbow === false, "Don't block it", () => save({ rainbow:false }))}
               </div>
               <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, marginTop:6, lineHeight:1.4 }}>
                 {cfg.rainbow !== false
-                  ? "A Rainbow Day needs every chore done, including her zone chores. In 'Any day' mode that means no Rainbow Day until her zone list is finished for the week."
-                  : "Zone chores still show up and can be checked off, but a Rainbow Day only needs the daily chores plus School, Exercise and Goals."}
+                  ? "A Rainbow Day needs every chore done, including her weekly zone chores. In 'Any day' mode that means no Rainbow Day until her zone list is finished for the week. Daily zone chores always count, like any other daily chore."
+                  : "Weekly zone chores still show up and can be checked off, but a Rainbow Day only needs the daily chores (including daily zone chores) plus School, Exercise and Goals."}
               </div>
             </>
           );
@@ -1092,36 +1134,66 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores, saveCustomChor
       </div>
 
       {/* Zones */}
+      <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, margin:"4px 2px 8px", lineHeight:1.4 }}>
+        Choose <b>Daily</b> or <b>Weekly</b> for every chore. Daily chores show up for the zone's owner every day. Weekly chores are done once a week.
+      </div>
+      <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+        <button onClick={() => setOpenZones(Object.fromEntries(ZONES.map(zz => [zz.id, true])))} style={smallBtn}>Expand all</button>
+        <button onClick={() => setOpenZones({})} style={smallBtn}>Collapse all</button>
+      </div>
       {ZONES.map(z => {
         const items = byZone[z.id];
-        const open = openZone === z.id;
+        const open = !!openZones[z.id];
+        const nDaily = items.filter(it => freqOf(it) === "daily").length;
+        const nWeekly = items.length - nDaily;
         return (
           <div key={z.id} style={card}>
-            <div onClick={() => setOpenZone(open ? null : z.id)} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", cursor:"pointer" }}>
+            <div onClick={() => setOpenZones({ ...openZones, [z.id]: !open })} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", cursor:"pointer" }}>
               <span style={{ fontSize:24 }}>{z.emoji}</span>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontFamily:"'Fredoka',sans-serif", fontWeight:700, fontSize:15, color:T.text, lineHeight:1.2 }}>{z.name}</div>
-                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>{z.floor} · {items.length} weekly chore{items.length === 1 ? "" : "s"}</div>
+                <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>{z.floor} · {nDaily} daily · {nWeekly} weekly</div>
               </div>
               {ownerChip(memberOf(zoneOwner(z.id, today, cfg)))}
               <span style={{ color:T.muted, fontSize:12 }}>{open ? "▲" : "▼"}</span>
             </div>
             {open && (
               <div style={{ padding:"0 14px 10px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:6, padding:"2px 0 8px" }}>
+                  <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, fontWeight:700, color:T.muted }}>Set all to:</span>
+                  <button onClick={() => setAllFreq(items, "daily")} style={smallBtn}>Daily</button>
+                  <button onClick={() => setAllFreq(items, "weekly")} style={smallBtn}>Weekly</button>
+                </div>
                 {items.length === 0 && <div style={{ padding:"8px 0", fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted }}>No chores in this zone yet.</div>}
-                {items.map(item => (
-                  <div key={item.label + "|" + item.dow} style={rowStyle}>
-                    <span style={pill("weekly")}>{cfg.mode === "scheduled" ? `weekly · ${DOWN[item.dow]}` : "weekly"}</span>
-                    {editable("w|" + item.dow + "|" + item.label, item.label, "weekly", item.dow, z.id)}
-                    <button onClick={() => deleteZoneChore("weekly", item.dow, item.label)} style={delBtn} title="Delete chore">×</button>
-                    {zoneSelect(z.id, v => setWeekly(item.label, v), "No zone")}
-                  </div>
-                ))}
-                <div style={{ display:"flex", gap:6, alignItems:"center", paddingTop:10, marginTop:4, borderTop:`1px solid ${T.border}` }}>
+                {items.map(item => {
+                  const f = freqOf(item);
+                  const id = item.kind === "daily" ? "d|" + item.label : "w|" + item.dow + "|" + item.label;
+                  return (
+                    <div key={item.kind + "|" + item.dow + "|" + item.label} style={{ padding:"8px 0", borderTop:`1px solid ${T.border}` }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                        {editable(id, item.label, item.kind, item.dow, z.id)}
+                        <button onClick={() => deleteZoneChore(item.kind, item.dow, item.label)} style={delBtn} title="Delete chore">×</button>
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6 }}>
+                        {freqToggle(item.label, f)}
+                        {cfg.mode === "scheduled" && f === "weekly" && item.kind === "weekly" && (
+                          <span style={{ fontFamily:"'Nunito',sans-serif", fontSize:10, fontWeight:700, color:T.muted }}>usual day: {DOWN[item.dow]}</span>
+                        )}
+                        <span style={{ flex:1 }} />
+                        {zoneSelect(z.id, v => item.kind === "daily" ? setDaily(item.label, v) : setWeekly(item.label, v), "No zone")}
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ display:"flex", gap:6, alignItems:"center", paddingTop:10, marginTop:4, borderTop:`1px solid ${T.border}`, flexWrap:"wrap" }}>
                   <input value={newChore.zone === z.id ? newChore.name : ""} placeholder="Add a chore to this zone…"
                     onChange={e => setNewChore({ ...newChore, zone:z.id, name:e.target.value })}
                     onKeyDown={e => { if (e.key === "Enter") addZoneChore(z.id); }}
-                    style={{ ...editInput, border:`2px solid ${T.border}` }} />
+                    style={{ ...editInput, border:`2px solid ${T.border}`, minWidth:140 }} />
+                  <select value={newChore.freq || "weekly"} onChange={e => setNewChore({ ...newChore, freq:e.target.value })} style={selStyle} title="How often">
+                    <option value="weekly">Weekly</option>
+                    <option value="daily">Daily</option>
+                  </select>
                   {cfg.mode === "scheduled" && (
                     <select value={newChore.dow} onChange={e => setNewChore({ ...newChore, dow:+e.target.value })} style={selStyle} title="Usual day">
                       {[1,2,3,4,5,6,0].map(d => <option key={d} value={d}>{DOWN[d]}</option>)}
@@ -1151,23 +1223,22 @@ function AdminZones({ family, zoneCfg, saveZoneCfg, customChores, saveCustomChor
         ))}
       </div>
 
-      {/* Daily resets */}
+      {/* Daily chores not in a zone */}
       <div style={{ ...card, padding:"12px 14px" }}>
-        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, color:T.text }}>Daily resets</div>
+        <div style={{ fontFamily:"'Fredoka',sans-serif", fontSize:15, fontWeight:700, color:T.text }}>Daily chores not in a zone</div>
         <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted, marginBottom:4 }}>
-          Daily (Assign) chores can follow a zone owner too, so the daily reset goes to whoever owns that zone this week.
+          These Daily (Assign) chores are managed on the Chores tab. Pick a zone to move one into a zone — it starts as a daily zone chore.
         </div>
-        {dailyAll.map(label => {
-          const dz = zoneIdFor(lookup, "daily", label);
-          return (
-            <div key={label} style={rowStyle}>
-              <span style={pill("daily")}>daily</span>
-              {dz ? editable("d|" + label, label, "daily", 0, dz) : <span style={labelStyle}>{label}</span>}
-              {dz && <button onClick={() => deleteZoneChore("daily", 0, label)} style={delBtn} title="Delete chore">×</button>}
-              {zoneSelect(dz || "none", v => setDaily(label, v), "Manual")}
-            </div>
-          );
-        })}
+        {dailyAll.filter(label => !zoneIdFor(lookup, "daily", label)).length === 0 && (
+          <div style={{ padding:"8px 0", fontFamily:"'Nunito',sans-serif", fontSize:12, color:T.muted }}>Every daily chore is in a zone.</div>
+        )}
+        {dailyAll.filter(label => !zoneIdFor(lookup, "daily", label)).map(label => (
+          <div key={label} style={rowStyle}>
+            <span style={pill("daily")}>daily</span>
+            <span style={labelStyle}>{label}</span>
+            {zoneSelect("none", v => setDaily(label, v), "Manual")}
+          </div>
+        ))}
       </div>
     </div>
   );
