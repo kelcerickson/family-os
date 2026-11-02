@@ -1,4 +1,4 @@
-import { useState, useEffect, Component } from "react";
+import { useState, useEffect, useRef, Component } from "react";
 
 // Error boundary to catch crashes
 class ErrorBoundary extends Component {
@@ -1326,10 +1326,122 @@ const CELL_H = 52;
 
 const INIT_CAL_EVENTS = [];
 
+// ── Calendar: Day view ────────────────────────────────────────────────────────
+const DAY_NAMES = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const DAY_HDR_H = 58;
+function mtNowH() {
+  const n = new Date(new Date().toLocaleString("en-US", { timeZone:"America/Denver" }));
+  return n.getHours() + n.getMinutes() / 60;
+}
+function fmtClock(h) {
+  const hr = Math.floor(h + 1e-9);
+  const m = Math.round((h - hr) * 60);
+  const h12 = hr % 12 === 0 ? 12 : hr % 12;
+  return `${h12}:${String(m).padStart(2, "0")}${hr >= 12 && hr < 24 ? "pm" : "am"}`;
+}
+// Overlapping events in one column share the width side by side
+function layoutDayEvents(evs) {
+  const items = evs.slice()
+    .sort((a, b) => (a.startH - b.startH) || (b.dur - a.dur))
+    .map(ev => ({ ev, s:ev.startH, e:ev.startH + Math.max(ev.dur, 0.25) }));
+  const out = [];
+  let cluster = [], clusterEnd = 0;
+  const flush = () => {
+    const lanes = [];
+    cluster.forEach(it => {
+      let li = lanes.findIndex(end => end <= it.s + 1e-9);
+      if (li < 0) { li = lanes.length; lanes.push(0); }
+      lanes[li] = it.e;
+      it.lane = li;
+    });
+    cluster.forEach(it => { it.lanes = lanes.length; out.push(it); });
+    cluster = [];
+  };
+  items.forEach(it => {
+    if (cluster.length && it.s >= clusterEnd - 1e-9) flush();
+    clusterEnd = cluster.length ? Math.max(clusterEnd, it.e) : it.e;
+    cluster.push(it);
+  });
+  if (cluster.length) flush();
+  return out;
+}
+
+// One column per person, side by side, for a single day.  cols = [{ m: member, evs: [events that day] }]
+function CalendarDayView({ cols, isToday, nowH }) {
+  const scrollRef = useRef(null);
+  useEffect(() => {
+    if (!scrollRef.current) return;
+    const startH = isToday ? Math.min(Math.max(Math.floor(nowH) - 1, CAL_HOURS[0]), 16) : 8;
+    scrollRef.current.scrollTop = (startH - CAL_HOURS[0]) * CELL_H;
+  }, []);
+  const gridH = CAL_HOURS.length * CELL_H;
+  const nowTop = (nowH - CAL_HOURS[0]) * CELL_H;
+  return (
+    <div ref={scrollRef} style={{ flex:1, overflowY:"auto", overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
+      {cols.length === 0 ? (
+        <div style={{ padding:"48px 24px", textAlign:"center", color:T.muted, fontFamily:"'Nunito',sans-serif", fontSize:15 }}>
+          Tap a name above to show their calendar
+        </div>
+      ) : (
+        <div style={{ display:"flex", minWidth: 46 + cols.length * 96 }}>
+          {/* Time labels */}
+          <div style={{ width:46, flexShrink:0, borderRight:`1px solid ${T.border}` }}>
+            <div style={{ height:DAY_HDR_H, borderBottom:`2px solid ${T.border}`, background:T.bg, position:"sticky", top:0, zIndex:10 }} />
+            {CAL_HOURS.map(h => (
+              <div key={h} style={{ height:CELL_H, display:"flex", alignItems:"flex-start", justifyContent:"flex-end", paddingRight:7, paddingTop:5 }}>
+                <span style={{ fontSize:10, color:T.muted, fontWeight:600 }}>{h===0?"12a":h>12?`${h-12}p`:h===12?"12p":`${h}a`}</span>
+              </div>
+            ))}
+          </div>
+          {/* One column per person */}
+          <div style={{ flex:1, display:"flex", minWidth:0 }}>
+            {cols.map(({ m, evs }, ci) => (
+              <div key={m.id} style={{ flex:"1 1 0%", minWidth:96, borderRight: ci < cols.length - 1 ? `1px solid ${T.border}` : "none", position:"relative" }}>
+                <div style={{ position:"sticky", top:0, zIndex:9, height:DAY_HDR_H, background:m.color, display:"flex", alignItems:"center", justifyContent:"center", gap:6, padding:"0 4px" }}>
+                  <span style={{ fontSize:22 }}>{m.emoji}</span>
+                  <span style={{ fontFamily:"'Fredoka',sans-serif", fontSize:17, fontWeight:700, color:"#fff" }}>{m.name}</span>
+                </div>
+                <div style={{ position:"relative", height:gridH, background: ci % 2 ? "transparent" : "rgba(0,0,0,0.015)" }}>
+                  {CAL_HOURS.map((_, i) => <div key={i} style={{ position:"absolute", top:i*CELL_H, left:0, right:0, borderTop:`1px solid ${T.border}`, height:CELL_H }} />)}
+                  {isToday && nowTop >= 0 && nowTop <= gridH && (
+                    <div style={{ position:"absolute", top:nowTop, left:0, right:0, height:2, background:"#E5484D", zIndex:5, pointerEvents:"none" }}>
+                      <div style={{ position:"absolute", left:-1, top:-4, width:10, height:10, borderRadius:"50%", background:"#E5484D" }} />
+                    </div>
+                  )}
+                  {evs.length === 0 && (
+                    <div style={{ position:"absolute", top:(8 - CAL_HOURS[0]) * CELL_H + 6, left:0, right:0, textAlign:"center", fontFamily:"'Nunito',sans-serif", fontSize:11, color:T.muted }}>Nothing scheduled</div>
+                  )}
+                  {layoutDayEvents(evs).map(({ ev, lane, lanes }) => {
+                    const evTop = (ev.startH - CAL_HOURS[0]) * CELL_H + 2;
+                    const evH = Math.max(ev.dur * CELL_H - 4, 20);
+                    return (
+                      <div key={ev.id} style={{ position:"absolute", top:evTop, left:`calc(${(lane / lanes) * 100}% + 3px)`, width:`calc(${100 / lanes}% - 6px)`, height:evH, borderRadius:8, background:m.color + "EE", overflow:"hidden", zIndex:2, boxShadow:"0 1px 4px rgba(0,0,0,0.18)" }}>
+                        <div style={{ padding:"3px 6px", height:"100%", display:"flex", flexDirection:"column", justifyContent:"center" }}>
+                          <div style={{ fontSize:12, fontWeight:700, color:"#fff", lineHeight:1.2, textShadow:"0 1px 2px rgba(0,0,0,0.35)", overflow:"hidden", display:"-webkit-box", WebkitLineClamp: evH > 44 ? 3 : 1, WebkitBoxOrient:"vertical" }}>{ev.title}</div>
+                          {evH > 34 && <div style={{ fontSize:10, color:"rgba(255,255,255,0.9)", marginTop:1 }}>{fmtClock(ev.startH)} – {fmtClock(ev.startH + ev.dur)}</div>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CalendarPage({ family, events }) {
   const memberMap = Object.fromEntries(family.map(m => [m.id, m]));
-  const [weekAnchor, setWeekAnchor] = useState(() => getMountainToday());
-  const [visibleIds, setVisibleIds] = useState(new Set(family.map(m => m.id))); // Calendar shows everyone by default
+  const [view, setView] = useState("day");                                  // the Calendar tab opens on the Day view
+  const [weekAnchor, setWeekAnchor] = useState(() => getMountainToday());     // the day shown (Day) / the week it falls in (Week)
+  // Bazel, Okrie and Saya are on by default; Mom and Dad can be switched on with their name buttons
+  const [visibleIds, setVisibleIds] = useState(() => { const on = family.filter(m => m.defaultOn).map(m => m.id); return new Set(on.length ? on : family.map(m => m.id)); });
+  const step = view === "day" ? 1 : 7;
+  const [nowH, setNowH] = useState(mtNowH);
+  useEffect(() => { const t = setInterval(() => setNowH(mtNowH()), 60000); return () => clearInterval(t); }, []);
   const weekDates = getWeekDates(weekAnchor);
   const todayStr = getMountainToday().toDateString();
   const calScrollRef = useState(null);
@@ -1352,13 +1464,34 @@ function CalendarPage({ family, events }) {
     return matchesDow;
   }
   const visibleEvents = events.filter(ev => ev.memberIds.some(id => visibleIds.has(id)));
+  // Day view: one column per visible person, with that person's events for the day
+  const dayCols = family.filter(m => visibleIds.has(m.id)).map(m => ({ m, evs: events.filter(ev => ev.memberIds.includes(m.id) && eventMatchesDate(ev, weekAnchor)) }));
 
   return (
     <div style={{ display:"flex", flexDirection:"column", height:`calc(100vh - ${T.navH}px - 50px)`, marginTop:"50px", overflow:"hidden", touchAction:"pan-y", fontFamily:"'Fredoka',sans-serif", width:"100vw", marginLeft:0, marginRight:0 }}>
       <div style={{ background:T.white, borderBottom:`2px solid ${T.border}`, padding:"12px 16px 0", flexShrink:0, width:"100%" }}>
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:10 }}>
-          <h1 style={{ fontSize:24, fontWeight:700, color:T.text, margin:0 }}>{MONTHS[weekDates[0].getMonth()]} {weekDates[0].getFullYear()}</h1>
-          <div />
+          <div style={{ minWidth:0, flex:1 }}>
+            <h1 style={{ fontSize: view === "day" ? 21 : 24, fontWeight:700, color:T.text, margin:0, lineHeight:1.15 }}>
+              {view === "day"
+                ? `${DAY_NAMES[weekAnchor.getDay()]}, ${MONTHS[weekAnchor.getMonth()]} ${weekAnchor.getDate()}`
+                : `${MONTHS[weekDates[0].getMonth()]} ${weekDates[0].getFullYear()}`}
+            </h1>
+            {view === "day" && (() => {
+              const th = DAY_THEMES[weekAnchor.getDay()];
+              return <div style={{ fontFamily:"'Nunito',sans-serif", fontSize:12, fontWeight:700, color:th.color, marginTop:2 }}>{th.emoji} {th.label}{weekAnchor.toDateString() === todayStr ? " · Today" : ""}</div>;
+            })()}
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
+            <button onClick={() => setWeekAnchor(getMountainToday())}
+              style={{ padding:"7px 14px", borderRadius:99, border:`2px solid ${T.border}`, background:T.white, cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, color:T.sub }}>Today</button>
+            <div style={{ display:"inline-flex", borderRadius:99, overflow:"hidden", border:`2px solid ${T.border}`, background:T.stone }}>
+              {[["day","Day"],["week","Week"]].map(([v, label]) => (
+                <button key={v} onClick={() => setView(v)}
+                  style={{ padding:"7px 16px", border:"none", cursor:"pointer", fontFamily:"'Fredoka',sans-serif", fontSize:13, fontWeight:700, background: view === v ? T.text : "transparent", color: view === v ? "#fff" : T.sub }}>{label}</button>
+              ))}
+            </div>
+          </div>
         </div>
         <div style={{ display:"flex", gap:6, overflowX:"auto", paddingBottom:10 }}>
           {family.map(m => {
@@ -1374,7 +1507,7 @@ function CalendarPage({ family, events }) {
         </div>
       </div>
       {/* Left/Right week nav arrows */}
-      <button onClick={() => { const d=new Date(weekAnchor); d.setDate(d.getDate()-7); setWeekAnchor(d); }} style={{
+      <button onClick={() => { const d=new Date(weekAnchor); d.setDate(d.getDate()-step); setWeekAnchor(d); }} style={{
         position:"fixed", left:0, top:"50%", transform:"translateY(-50%)",
         zIndex:50, width:44, height:80, background:T.white,
         border:`2px solid ${T.border}`, borderLeft:"none",
@@ -1383,7 +1516,7 @@ function CalendarPage({ family, events }) {
         cursor:"pointer", boxShadow:"2px 0 12px rgba(0,0,0,0.08)",
         fontSize:22, color:T.sub, fontWeight:700,
       }}>‹</button>
-      <button onClick={() => { const d=new Date(weekAnchor); d.setDate(d.getDate()+7); setWeekAnchor(d); }} style={{
+      <button onClick={() => { const d=new Date(weekAnchor); d.setDate(d.getDate()+step); setWeekAnchor(d); }} style={{
         position:"fixed", right:0, top:"50%", transform:"translateY(-50%)",
         zIndex:50, width:44, height:80, background:T.white,
         border:`2px solid ${T.border}`, borderRight:"none",
@@ -1392,7 +1525,9 @@ function CalendarPage({ family, events }) {
         cursor:"pointer", boxShadow:"-2px 0 12px rgba(0,0,0,0.08)",
         fontSize:22, color:T.sub, fontWeight:700,
       }}>›</button>
-      {/* Single scroll container with sticky time labels */}
+      {view === "day" ? (
+        <CalendarDayView cols={dayCols} isToday={weekAnchor.toDateString() === todayStr} nowH={nowH} />
+      ) : (
       <div ref={el => { if(el && calScrollRef[0]!==el) { calScrollRef[0]=el; el.scrollTop=(8-CAL_HOURS[0])*CELL_H; }}} style={{ flex:1, overflowY:"auto", overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
         <div style={{ display:"flex", minWidth:0 }}>
           {/* Time labels column - scrolls with content */}
@@ -1486,6 +1621,7 @@ function CalendarPage({ family, events }) {
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
